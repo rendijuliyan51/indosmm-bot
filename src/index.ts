@@ -11,6 +11,8 @@ import { runTicketGarbageCollector, handleMemberLeave } from './workers/ticketGa
 import { runDatabaseBackup, scheduleBackup } from './workers/backupWorker';
 import { REST, Routes, SlashCommandBuilder, SlashCommandSubcommandBuilder, GuildMember, TextChannel } from 'discord.js';
 import { execFileSync } from 'child_process';
+import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
+import path from 'path';
 import { indosmm } from './providers/indosmm';
 import { buildLowBalanceNotif } from './lib/embeds';
 import { handleMessageCreate } from './bot/handlers/messageCreate';
@@ -87,13 +89,54 @@ async function registerCommands(): Promise<void> {
   logger.info(`[Commands] Slash commands registered on ${registered}/${guildIds.length} guild(s)`);
 }
 
+// Salin file database SEBELUM migrasi sebagai jaring pengaman. Kalau migrasi bermasalah,
+// admin masih punya salinan data (tiket/order) yang bisa dipulihkan. Hanya untuk SQLite lokal.
+function backupDatabaseBeforeMigration(): void {
+  try {
+    const url = process.env.DATABASE_URL || ENV.DATABASE_URL;
+    if (!url.startsWith('file:')) return;
+
+    const dbPath = path.resolve(url.slice('file:'.length));
+    if (!existsSync(dbPath)) {
+      logger.info('[DB] Database belum ada — lewati backup pra-migrasi (fresh install).');
+      return;
+    }
+
+    const dir = path.resolve('./backups');
+    mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const dest  = path.join(dir, `pre-migrate-${stamp}.db`);
+    copyFileSync(dbPath, dest);
+    logger.info(`[DB] Backup pra-migrasi dibuat: ${dest}`);
+
+    // Simpan maksimal 10 backup pra-migrasi terakhir agar tidak menumpuk.
+    const files = readdirSync(dir)
+      .filter(f => f.startsWith('pre-migrate-') && f.endsWith('.db'))
+      .map(f => ({ f, m: statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => a.m - b.m);
+    while (files.length > 10) {
+      const oldest = files.shift();
+      if (oldest) { try { unlinkSync(path.join(dir, oldest.f)); } catch { /* ignore */ } }
+    }
+  } catch (e: any) {
+    logger.warn('[DB] Backup pra-migrasi gagal (migrasi tetap dilanjutkan)', { error: e.message });
+  }
+}
+
 async function initDatabase(): Promise<void> {
   // Sinkronkan skema database dari prisma/schema.prisma (satu-satunya sumber kebenaran).
   // Menggantikan CREATE TABLE manual yang rawan drift terhadap schema.prisma.
   // Pastikan DATABASE_URL tersedia untuk Prisma CLI.
   process.env.DATABASE_URL = process.env.DATABASE_URL || ENV.DATABASE_URL;
 
-  execFileSync('npx', ['prisma', 'db', 'push', '--skip-generate'], {
+  // 1) Amankan data dulu (salin DB sebelum menyentuh skema).
+  backupDatabaseBeforeMigration();
+
+  // 2) Terapkan skema. --accept-data-loss WAJIB agar migrasi non-interaktif di server tidak
+  //    GAGAL saat ada perubahan destruktif yang memang disengaja (mis. menghapus tabel usang
+  //    'User' yang tidak terpakai). Perubahan pada tabel aktif (Ticket/Order/dll) bersifat
+  //    ADITIF (hanya menambah kolom/tabel), sehingga data tiket & order TETAP AMAN.
+  execFileSync('npx', ['prisma', 'db', 'push', '--skip-generate', '--accept-data-loss'], {
     stdio: 'inherit',
     env:   process.env,
   });
