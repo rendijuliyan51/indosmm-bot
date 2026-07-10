@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -24,6 +24,18 @@ process.env.DATABASE_URL = process.env.DATABASE_URL || 'file:./dev.db';
 function run(cmd) {
   console.log(`[bootstrap] $ ${cmd}`);
   execSync(cmd, { stdio: 'inherit', env: process.env, cwd: __dirname });
+}
+
+// Jalankan CLI JavaScript lewat `node <file>`. Ini menghindari error "Permission denied"
+// pada skrip di node_modules/.bin yang di sebagian host (mis. EnderCloud) kehilangan bit
+// executable. Menjalankan lewat `node` tidak memerlukan bit executable pada skrip tersebut.
+function runNode(argsArray, label) {
+  console.log(`[bootstrap] $ node ${label || argsArray.join(' ')}`);
+  execFileSync(process.execPath, argsArray, { stdio: 'inherit', env: process.env, cwd: __dirname });
+}
+
+function cliPath(pkg, ...rel) {
+  return path.join(__dirname, 'node_modules', pkg, ...rel);
 }
 
 function newestMtime(dir) {
@@ -61,11 +73,17 @@ try {
   if (!fs.existsSync(path.join(__dirname, 'node_modules'))) {
     run('npm install');
   }
-  // Generate Prisma Client (idempoten, cepat).
-  run('npx prisma generate');
 
+  // 1) Generate Prisma Client (idempoten, cepat) — via node agar aman dari "Permission denied".
+  const prismaCli = cliPath('prisma', 'build', 'index.js');
+  if (fs.existsSync(prismaCli)) runNode([prismaCli, 'generate'], 'prisma generate');
+  else run('npx prisma generate');
+
+  // 2) Compile TypeScript -> dist/ (hanya bila ada perubahan) — juga via node.
   if (needsBuild()) {
-    run('npx tsc');
+    const tscCli = cliPath('typescript', 'bin', 'tsc');
+    if (fs.existsSync(tscCli)) runNode([tscCli], 'tsc');
+    else run('npx tsc');
   } else {
     console.log('[bootstrap] dist/ sudah terbaru, lewati build.');
   }

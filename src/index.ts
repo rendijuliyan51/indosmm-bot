@@ -129,6 +129,20 @@ function backupDatabaseBeforeMigration(): void {
   }
 }
 
+// Cari file CLI Prisma agar bisa dijalankan lewat `node <cli.js>`. Ini menghindari error
+// "prisma: Permission denied" di sebagian host (mis. EnderCloud) yang skrip di node_modules/.bin
+// -nya kehilangan bit executable. Menjalankan lewat `node` tidak butuh bit executable.
+function resolvePrismaCli(): string | null {
+  const candidates = [
+    path.join(process.cwd(), 'node_modules', 'prisma', 'build', 'index.js'),
+    path.join(__dirname, '..', 'node_modules', 'prisma', 'build', 'index.js'),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return null;
+}
+
 async function initDatabase(): Promise<void> {
   // Sinkronkan skema database dari prisma/schema.prisma (satu-satunya sumber kebenaran).
   // Menggantikan CREATE TABLE manual yang rawan drift terhadap schema.prisma.
@@ -142,10 +156,15 @@ async function initDatabase(): Promise<void> {
   //    GAGAL saat ada perubahan destruktif yang memang disengaja (mis. menghapus tabel usang
   //    'User' yang tidak terpakai). Perubahan pada tabel aktif (Ticket/Order/dll) bersifat
   //    ADITIF (hanya menambah kolom/tabel), sehingga data tiket & order TETAP AMAN.
-  execFileSync('npx', ['prisma', 'db', 'push', '--skip-generate', '--accept-data-loss'], {
-    stdio: 'inherit',
-    env:   process.env,
-  });
+  const args = ['db', 'push', '--skip-generate', '--accept-data-loss'];
+  const prismaCli = resolvePrismaCli();
+  if (prismaCli) {
+    // Jalankan via node (aman dari masalah permission pada .bin).
+    execFileSync(process.execPath, [prismaCli, ...args], { stdio: 'inherit', env: process.env });
+  } else {
+    // Fallback: pakai npx bila CLI tidak ketemu.
+    execFileSync('npx', ['prisma', ...args], { stdio: 'inherit', env: process.env });
+  }
 
   logger.info('[DB] Schema synced via prisma db push');
 }
@@ -220,11 +239,37 @@ async function main(): Promise<void> {
   // Tangkap bukti pembayaran (gambar) yang diupload user di channel ticket.
   client.on('messageCreate', handleMessageCreate);
 
+  // Diagnostik koneksi: bila bot "nyangkut" setelah login, listener ini menampilkan sebabnya
+  // (mis. intent bermasalah / gateway putus) sehingga tidak diam tanpa info.
+  client.on('error',          (e: any) => logger.error('[Discord] Client error', { error: e?.message }));
+  client.on('shardError',     (e: any) => logger.error('[Discord] Shard error', { error: e?.message }));
+  client.on('shardDisconnect', (ev: any, id: number) => logger.warn(`[Discord] Shard ${id} disconnected`, { code: ev?.code, reason: ev?.reason }));
+  client.on('warn',           (m: string) => logger.warn('[Discord] Warn', { message: m }));
+
+  // Watchdog: kalau event "ready" tak muncul dalam 30 detik, kemungkinan besar Privileged
+  // Intents belum diaktifkan di Discord Developer Portal.
+  const readyWatchdog = setTimeout(() => {
+    logger.warn(
+      '[Boot] Bot login tapi belum "ready" setelah 30 detik. ' +
+      'Penyebab paling umum: PRIVILEGED INTENTS belum diaktifkan. ' +
+      'Buka Discord Developer Portal → aplikasi bot → tab Bot → aktifkan ' +
+      '"SERVER MEMBERS INTENT" dan "MESSAGE CONTENT INTENT", lalu restart bot. ' +
+      'Bisa juga karena token salah atau bot belum diundang ke server.'
+    );
+  }, 30_000);
+  client.once('ready', () => clearTimeout(readyWatchdog));
+
   try {
     logger.info('[Boot] Logging in to Discord...');
     await client.login(ENV.DISCORD_TOKEN);
+    logger.info('[Boot] Login OK, menunggu event ready dari gateway...');
   } catch (err: any) {
-    logger.error('[Boot] Discord login failed', { error: err.message });
+    clearTimeout(readyWatchdog);
+    const msg = String(err?.message || err);
+    logger.error('[Boot] Discord login failed', { error: msg });
+    if (/disallowed intents|used disallowed/i.test(msg)) {
+      logger.error('[Boot] >> Aktifkan Privileged Intents (Server Members + Message Content) di Discord Developer Portal, lalu restart.');
+    }
     process.exit(1);
   }
 }

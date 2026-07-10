@@ -8,7 +8,7 @@
     "start": "node index.js",
     "start:compiled": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "node node_modules/prisma/build/index.js generate || prisma generate || true"
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",
