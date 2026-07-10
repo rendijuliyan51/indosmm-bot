@@ -2,6 +2,7 @@ import { ButtonInteraction, TextChannel, PermissionFlagsBits } from 'discord.js'
 import { prisma } from '../../bot/client';
 import { logger } from '../../lib/logger';
 import { buildTicketClosedEmbed } from '../../lib/embeds';
+import { scheduleChannelDeletion } from '../../lib/ticketLifecycle';
 import { ENV } from '../../config/env';
 
 function isAdmin(interaction: ButtonInteraction): boolean {
@@ -61,12 +62,10 @@ export async function handleTicketClose(interaction: ButtonInteraction): Promise
     await channel.permissionOverwrites.edit(ticket.discord_user_id, {
       SendMessages: false,
     }).catch(() => {});
-
-    // Delete after 5 minutes
-    setTimeout(async () => {
-      await channel.delete().catch(() => {});
-    }, 5 * 60 * 1000);
   }
+
+  // Jadwalkan penghapusan channel secara persisten (tahan restart).
+  await scheduleChannelDeletion(ticketId);
 
   await interaction.editReply({ content: '✅ Ticket sedang ditutup...' });
   logger.info(`[TicketClose] Ticket ${ticketId} closed by ${interaction.user.tag}`);

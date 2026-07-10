@@ -37,33 +37,39 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     });
     if (!payment || payment.status !== 'pending') return;
 
+    // Notif admin (dengan tombol) hanya dikirim SEKALI, yaitu saat bukti pertama diupload.
+    // Upload berikutnya cuma memperbarui proof_url agar tidak spam tombol Approve ke admin.
+    const isFirstProof = !payment.proof_url;
+
     await prisma.manualPayment.update({
       where: { id: payment.id },
       data:  { proof_url: image.url },
     });
 
-    const order   = await prisma.order.findFirst({ where: { ticket_id: ticket.id } });
-    const service = order ? await prisma.service.findUnique({ where: { id: order.service_id } }) : null;
+    if (isFirstProof) {
+      const order   = await prisma.order.findFirst({ where: { ticket_id: ticket.id } });
+      const service = order ? await prisma.service.findUnique({ where: { id: order.service_id } }) : null;
 
-    const adminChannel = await message.client.channels
-      .fetch(ENV.ADMIN_LOG_CHANNEL_ID)
-      .catch(() => null) as TextChannel | null;
+      const adminChannel = await message.client.channels
+        .fetch(ENV.ADMIN_LOG_CHANNEL_ID)
+        .catch(() => null) as TextChannel | null;
 
-    if (adminChannel) {
-      const { embed, row } = buildAdminPaymentNotif({
-        ticketId:    ticket.id,
-        userId:      ticket.discord_user_id,
-        serviceName: service?.name || 'Unknown',
-        total:       payment.amount,
-        proofUrl:    image.url,
-      });
-      await adminChannel.send({ embeds: [embed], components: [row] });
+      if (adminChannel) {
+        const { embed, row } = buildAdminPaymentNotif({
+          ticketId:    ticket.id,
+          userId:      ticket.discord_user_id,
+          serviceName: service?.name || 'Unknown',
+          total:       payment.amount,
+          proofUrl:    image.url,
+        });
+        await adminChannel.send({ embeds: [embed], components: [row] });
+      }
     }
 
     await message.reply('🧾 Bukti pembayaran diterima! Admin akan segera memverifikasi. Mohon tunggu ya.')
       .catch(() => {});
 
-    logger.info(`[Proof] Payment proof received for ticket ${ticket.id}`);
+    logger.info(`[Proof] Payment proof received for ticket ${ticket.id} (first=${isFirstProof})`);
   } catch (err: any) {
     logger.error('[MessageCreate] Failed to process message', { error: err.message });
   }

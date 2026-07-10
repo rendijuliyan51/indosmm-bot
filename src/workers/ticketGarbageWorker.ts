@@ -2,6 +2,7 @@ import { Client, TextChannel, GuildMember } from 'discord.js';
 import { prisma } from '../bot/client';
 import { logger } from '../lib/logger';
 import { buildTicketClosedEmbed } from '../lib/embeds';
+import { scheduleChannelDeletion } from '../lib/ticketLifecycle';
 import { ENV } from '../config/env';
 
 async function closeAndDeleteTicket(
@@ -23,14 +24,45 @@ async function closeAndDeleteTicket(
     const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
     if (channel) {
       await channel.send({ embeds: [buildTicketClosedEmbed(reason)] });
-      setTimeout(async () => {
-        await channel.delete().catch(() => {});
-      }, 5 * 60 * 1000);
     }
+    // Jadwalkan penghapusan channel secara persisten (tahan restart).
+    await scheduleChannelDeletion(ticketId);
 
     logger.info(`[TicketGarbage] Closed ticket ${ticketId}: ${reason}`);
   } catch (err: any) {
     logger.error(`[TicketGarbage] Failed to close ticket ${ticketId}`, { error: err.message });
+  }
+}
+
+/**
+ * Sweeper penghapusan channel ticket yang PERSISTEN.
+ * Memproses semua ticket yang delete_channel_at-nya sudah lewat (termasuk yang jatuh tempo
+ * saat bot mati). Dijalankan saat boot dan berkala, menggantikan setTimeout in-memory.
+ */
+export async function runTicketChannelSweeper(client: Client): Promise<void> {
+  try {
+    const now = new Date();
+    const due = await prisma.ticket.findMany({
+      where: { delete_channel_at: { lte: now } },
+    });
+
+    for (const ticket of due) {
+      try {
+        const channel = await client.channels.fetch(ticket.ticket_channel_id).catch(() => null) as TextChannel | null;
+        if (channel) {
+          await channel.delete().catch(() => {});
+        }
+        await prisma.ticket.update({
+          where: { id: ticket.id },
+          data:  { delete_channel_at: null, archived_at: now },
+        });
+        logger.info(`[ChannelSweeper] Deleted channel for ticket ${ticket.id}`);
+      } catch (err: any) {
+        logger.error(`[ChannelSweeper] Failed for ticket ${ticket.id}`, { error: err.message });
+      }
+    }
+  } catch (err: any) {
+    logger.error('[ChannelSweeper] Worker failed', { error: err.message });
   }
 }
 

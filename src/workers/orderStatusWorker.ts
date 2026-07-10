@@ -12,6 +12,9 @@ import { isRefillExpired } from '../lib/pricing';
 
 const ACTIVE_STATUSES = ['submitted', 'processing', 'partial', 'pending', 'in progress'];
 
+// Cegah dua run tumpang tindih (mis. saat banyak order membuat satu run > 60 detik).
+let statusCheckRunning = false;
+
 function buildProgressBar(quantity: number, remains: number): string {
   const done    = Math.max(0, quantity - remains);
   const percent = Math.min(100, Math.round((done / quantity) * 100));
@@ -21,6 +24,11 @@ function buildProgressBar(quantity: number, remains: number): string {
 }
 
 export async function runOrderStatusCheck(client: Client): Promise<void> {
+  if (statusCheckRunning) {
+    logger.info('[OrderStatus] Previous run masih berjalan, dilewati.');
+    return;
+  }
+  statusCheckRunning = true;
   try {
     const orders = await prisma.order.findMany({
       where: { status: { in: ACTIVE_STATUSES } },
@@ -163,6 +171,8 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
 
   } catch (err: any) {
     logger.error('[OrderStatus] Worker failed', { error: err.message });
+  } finally {
+    statusCheckRunning = false;
   }
 }
 

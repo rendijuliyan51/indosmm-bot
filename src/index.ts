@@ -7,7 +7,7 @@ import { runRecovery } from './workers/recoveryWorker';
 import { runServiceSync } from './workers/serviceSyncWorker';
 import { runOrderStatusCheck } from './workers/orderStatusWorker';
 import { runCatalogUpdate } from './workers/catalogWorker';
-import { runTicketGarbageCollector, handleMemberLeave } from './workers/ticketGarbageWorker';
+import { runTicketGarbageCollector, runTicketChannelSweeper, handleMemberLeave } from './workers/ticketGarbageWorker';
 import { runDatabaseBackup, scheduleBackup } from './workers/backupWorker';
 import { REST, Routes, SlashCommandBuilder, SlashCommandSubcommandBuilder, GuildMember, TextChannel } from 'discord.js';
 import { execFileSync } from 'child_process';
@@ -119,6 +119,10 @@ async function main(): Promise<void> {
     try { await registerCommands(); } catch (e: any) { logger.error('[Boot] Command register failed', { error: e.message }); }
 
     try { await runRecovery(client); } catch (e: any) { logger.error('[Boot] Recovery failed', { error: e.message }); }
+    // Segera bersihkan channel yang jatuh tempo hapus saat bot mati, dan sinkronkan status
+    // order aktif langsung (jangan menunggu interval 60 detik) agar tidak "amnesia" pasca-restart.
+    try { await runTicketChannelSweeper(client); } catch (e: any) { logger.error('[Boot] ChannelSweeper failed', { error: e.message }); }
+    try { await runOrderStatusCheck(client); } catch (e: any) { logger.error('[Boot] OrderStatus initial failed', { error: e.message }); }
     try { await runServiceSync(); } catch (e: any) { logger.error('[Boot] ServiceSync failed', { error: e.message }); }
     try { await runCatalogUpdate(client); } catch (e: any) { logger.error('[Boot] Catalog failed', { error: e.message }); }
     try { await checkBalance(); } catch (e: any) { logger.error('[Boot] Balance check failed', { error: e.message }); }
@@ -145,6 +149,11 @@ async function main(): Promise<void> {
     setInterval(async () => {
       try { await runTicketGarbageCollector(client); } catch (e: any) { logger.error('[Worker] GarbageCollector failed', { error: e.message }); }
     }, 5 * 60 * 1000);
+
+    // Sweeper penghapusan channel ticket (persisten) — tiap 60 detik.
+    setInterval(async () => {
+      try { await runTicketChannelSweeper(client); } catch (e: any) { logger.error('[Worker] ChannelSweeper failed', { error: e.message }); }
+    }, 60 * 1000);
 
     setInterval(async () => {
       try { await checkBalance(); } catch (e: any) { logger.error('[Worker] Balance failed', { error: e.message }); }

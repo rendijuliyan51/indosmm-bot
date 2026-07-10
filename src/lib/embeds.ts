@@ -325,6 +325,7 @@ const STATUS_CONFIG: Record<string, { color: ColorResolvable; emoji: string; lab
   canceled:        { color: RED,    emoji: '❌', label: 'Dibatalkan'                 },
   failed:          { color: RED,    emoji: '❌', label: 'Gagal'                      },
   refill_pending:  { color: PURPLE, emoji: '🔄', label: 'Refill Sedang Diproses'     },
+  needs_review:    { color: ORANGE, emoji: '🔎', label: 'Perlu Verifikasi Admin'     },
   error:           { color: RED,    emoji: '❌', label: 'Error'                      },
 };
 
@@ -441,8 +442,7 @@ export function buildLowBalanceNotif(balance: number, threshold: number): EmbedB
     .setDescription(
       `Saldo akun IndoSMM kamu saat ini: **Rp ${balance.toLocaleString('id-ID')}**\n` +
       `Batas minimum: **Rp ${threshold.toLocaleString('id-ID')}**\n\n` +
-      `Segera deposit saldo agar order tidak gagal!\n` +
-      `Top up di: https://indosmm.id`
+      `Segera deposit saldo agar order tidak gagal!`
     )
     .setFooter(footer())
     .setTimestamp();

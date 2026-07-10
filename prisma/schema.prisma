@@ -67,6 +67,9 @@ model Ticket {
   archived_at       DateTime?
   closed_by         String?
   close_reason      String?
+  // Waktu terjadwal untuk menghapus channel Discord. Disimpan di DB (bukan setTimeout)
+  // agar penghapusan tetap terlaksana meski bot restart di tengah jeda tutup->hapus.
+  delete_channel_at DateTime?
 }
 
 model Order {

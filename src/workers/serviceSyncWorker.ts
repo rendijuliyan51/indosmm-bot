@@ -2,6 +2,7 @@ import { prisma } from '../bot/client';
 import { indosmm } from '../providers/indosmm';
 import { logger } from '../lib/logger';
 import { calculateSellPrice, parseRefillDays, parseRefillSupport } from '../lib/pricing';
+import { ENV } from '../config/env';
 
 const ALLOWED_CATEGORIES = [
   'instagram', 'tiktok', 'telegram', 'spotify', 'snack video',
@@ -37,7 +38,6 @@ export async function runServiceSync(): Promise<void> {
 
     for (const s of filtered) {
       const buyPrice   = parseFloat(s.rate);
-      const sellPrice  = calculateSellPrice(buyPrice);
       const refill     = parseRefillSupport(s.name) || s.refill;
       const refillDays = parseRefillDays(s.name);
       const min        = parseInt(s.min);
@@ -46,6 +46,16 @@ export async function runServiceSync(): Promise<void> {
       const existing = await prisma.service.findUnique({
         where: { provider_service_id: String(s.service) },
       });
+
+      // PENTING: pertahankan markup kustom per-layanan saat update. Sebelumnya price_sell
+      // dihitung ulang dengan markup DEFAULT tiap sync, sehingga markup yang di-set admin
+      // lewat /admin set-markup ter-reset setiap 30 menit. Sekarang:
+      //   - UPDATE  → pakai markup_value milik service yang sudah tersimpan
+      //   - CREATE  → pakai markup default dari ENV
+      const createMarkup = ENV.MARKUP_PERCENTAGE;
+      const updateMarkup = existing?.markup_value ?? ENV.MARKUP_PERCENTAGE;
+      const sellPriceUpdate = calculateSellPrice(buyPrice, updateMarkup);
+      const sellPriceCreate = calculateSellPrice(buyPrice, createMarkup);
 
       // Deteksi perubahan pada data provider agar snapshot hanya ditulis saat ada perubahan
       // (menghindari ribuan baris snapshot identik tiap sync).
@@ -70,7 +80,8 @@ export async function runServiceSync(): Promise<void> {
           min,
           max,
           price_buy:      buyPrice,
-          price_sell:     sellPrice,
+          // markup_value TIDAK diubah agar markup kustom admin tetap terjaga.
+          price_sell:     sellPriceUpdate,
           refill:         refill,
           refill_days:    refillDays,
           active:         true,
@@ -86,9 +97,9 @@ export async function runServiceSync(): Promise<void> {
           min,
           max,
           price_buy:           buyPrice,
-          price_sell:          sellPrice,
+          price_sell:          sellPriceCreate,
           markup_type:         'percentage',
-          markup_value:        40,
+          markup_value:        createMarkup,
           refill:              refill,
           refill_days:         refillDays,
           active:              true,
