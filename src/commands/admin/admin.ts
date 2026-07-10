@@ -1,8 +1,10 @@
-import { ChatInputCommandInteraction } from 'discord.js';
+import { ChatInputCommandInteraction, TextChannel } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { logger } from '../../lib/logger';
 import { runServiceSync } from '../../workers/serviceSyncWorker';
 import { indosmm } from '../../providers/indosmm';
+import { buildTicketClosedEmbed } from '../../lib/embeds';
+import { scheduleChannelDeletion } from '../../lib/ticketLifecycle';
 
 export async function handleAdminCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
@@ -92,16 +94,89 @@ export async function handleAdminCommand(interaction: ChatInputCommandInteractio
       data:  { status: 'cancelled', updated_at: new Date() },
     });
 
+    // Tutup ticket terkait sekalian + jadwalkan hapus channel (persisten, tahan restart),
+    // dan beri tahu pembeli di channel ticket.
+    let ticketClosed = false;
+    const ticket = await prisma.ticket.findUnique({ where: { id: order.ticket_id } });
+    if (ticket && !['closed', 'cancelled', 'orphaned'].includes(ticket.status)) {
+      await prisma.ticket.update({
+        where: { id: ticket.id },
+        data: {
+          status:       'cancelled',
+          closed_at:    new Date(),
+          closed_by:    interaction.user.id,
+          close_reason: 'Order dibatalkan oleh admin',
+        },
+      });
+
+      const ch = await interaction.client.channels.fetch(ticket.ticket_channel_id).catch(() => null) as TextChannel | null;
+      if (ch) {
+        await ch.send({
+          content: `<@${ticket.discord_user_id}> Order kamu dibatalkan oleh admin.`,
+          embeds:  [buildTicketClosedEmbed('Order dibatalkan oleh admin.')],
+        }).catch(() => {});
+      }
+
+      await scheduleChannelDeletion(ticket.id);
+      ticketClosed = true;
+    }
+
     await prisma.adminAuditLog.create({
       data: {
         actor_user_id: interaction.user.id,
         action:        'cancel_order',
         target_type:   'order',
         target_id:     order.id,
+        details_json:  JSON.stringify({ ticket_id: order.ticket_id, ticket_closed: ticketClosed }),
       },
     });
 
-    await interaction.editReply({ content: `✅ Order \`${order.id.slice(0, 8)}\` dibatalkan.` });
+    await interaction.editReply({
+      content: `✅ Order \`${order.id.slice(0, 8)}\` dibatalkan.` +
+               (ticketClosed ? ' Ticket terkait ikut ditutup & channel akan dihapus.' : ''),
+    });
+    return;
+  }
+
+  if (sub === 'set-description') {
+    const providerId = interaction.options.getString('service_id', true).trim();
+    const text       = interaction.options.getString('text', true).trim();
+
+    const service = await prisma.service.findUnique({
+      where: { provider_service_id: providerId },
+    });
+
+    if (!service) {
+      await interaction.editReply({ content: `❌ Layanan dengan provider service ID \`${providerId}\` tidak ditemukan. Pastikan sudah pernah sync.` });
+      return;
+    }
+
+    // "-" berarti hapus override, kembali memakai deskripsi bawaan provider.
+    const override = text === '-' ? null : text;
+
+    await prisma.service.update({
+      where: { id: service.id },
+      data:  { description_override: override, updated_at: new Date() },
+    });
+
+    // Reset hash katalog agar embed ikut refresh bila perlu.
+    await prisma.catalogMessage.updateMany({ data: { last_hash: null } });
+
+    await prisma.adminAuditLog.create({
+      data: {
+        actor_user_id: interaction.user.id,
+        action:        'set_description',
+        target_type:   'service',
+        target_id:     service.id,
+        details_json:  JSON.stringify({ provider_service_id: providerId, cleared: override === null }),
+      },
+    });
+
+    await interaction.editReply({
+      content: override === null
+        ? `✅ Deskripsi override untuk **${service.name}** dihapus. Kembali memakai deskripsi provider.`
+        : `✅ Deskripsi untuk **${service.name}** berhasil diperbarui.\n\n**Preview:**\n${override.slice(0, 500)}${override.length > 500 ? '…' : ''}`,
+    });
     return;
   }
 

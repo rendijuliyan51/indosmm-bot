@@ -9,6 +9,7 @@ import {
   buildLowBalanceNotif,
 } from '../../lib/embeds';
 import { getRefillExpiryDate } from '../../lib/pricing';
+import { scheduleChannelDeletion } from '../../lib/ticketLifecycle';
 import { ENV } from '../../config/env';
 
 export async function handlePaymentApprove(interaction: ButtonInteraction): Promise<void> {
@@ -44,7 +45,7 @@ export async function handlePaymentApprove(interaction: ButtonInteraction): Prom
     const balance = await indosmm.getBalance();
     if (balance < order.buy_price) {
       await interaction.editReply({
-        content: `❌ Saldo IndoSMM tidak cukup!\nSaldo: **Rp ${balance.toLocaleString('id-ID')}**\nDibutuhkan: **Rp ${order.buy_price.toLocaleString('id-ID')}**\n\nSegera top up saldo di https://indosmm.id`,
+        content: `❌ Saldo provider tidak cukup!\nSaldo: **Rp ${balance.toLocaleString('id-ID')}**\nDibutuhkan: **Rp ${order.buy_price.toLocaleString('id-ID')}**\n\nSegera lakukan deposit saldo terlebih dahulu.`,
       });
       return;
     }
@@ -231,6 +232,18 @@ export async function handlePaymentReject(interaction: ButtonInteraction): Promi
     orderBy: { created_at: 'desc' },
   });
 
+  // GUARD: jangan reject kalau pembayaran sudah di-approve atau order sudah dikirim/diproses
+  // provider. Reject setelah itu akan membatalkan tiket tanpa membatalkan order di provider
+  // (uang provider tetap terpotong). Gunakan /admin cancel-order untuk kasus ini.
+  const activeOrder = await prisma.order.findFirst({ where: { ticket_id: ticketId } });
+  if (payment?.status === 'approved' ||
+      (activeOrder && ['paid', 'submitted', 'processing', 'partial', 'completed', 'needs_review'].includes(activeOrder.status))) {
+    await interaction.editReply({
+      content: '⚠️ Pembayaran sudah di-approve / order sudah diproses provider. Tidak bisa di-reject.\nGunakan `/admin cancel-order` bila perlu membatalkan.',
+    });
+    return;
+  }
+
   if (payment?.status === 'pending') {
     await prisma.manualPayment.update({
       where: { id: payment.id },
@@ -273,9 +286,11 @@ export async function handlePaymentReject(interaction: ButtonInteraction): Promi
         content: `<@${ticket.discord_user_id}> ❌ Maaf, pembayaran kamu ditolak oleh admin. Silakan hubungi admin jika ada pertanyaan.`,
         embeds:  [buildTicketClosedEmbed('Payment ditolak oleh admin.')],
       });
-      setTimeout(async () => { await ticketChannel.delete().catch(() => {}); }, 5 * 60 * 1000);
     }
   } catch (e) {}
+
+  // Jadwalkan penghapusan channel secara persisten (tahan restart).
+  await scheduleChannelDeletion(ticketId);
 
   await interaction.editReply({ content: '✅ Payment rejected. Ticket akan ditutup.' });
   logger.info(`[PaymentReject] Ticket ${ticketId} rejected by ${interaction.user.tag}`);

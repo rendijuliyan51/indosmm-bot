@@ -63,6 +63,12 @@ function truncateForDropdown(name: string): string {
   return name.slice(0, 97) + '...';
 }
 
+// Batas panjang value sebuah field embed Discord adalah 1024 karakter.
+function truncateField(text: string, max = 1024): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max - 3) + '...';
+}
+
 export function parseServiceInfo(name: string, description?: string | null): string {
   const text  = name + ' ' + (description || '');
   const lines: string[] = [];
@@ -118,34 +124,48 @@ const GENERAL_RULES = [
 
 export function buildServiceDetailEmbed(service: {
   id: string; name: string; category: string;
-  description?: string | null; min: number; max: number;
+  description?: string | null; description_override?: string | null;
+  min: number; max: number;
   price_sell: number; refill: boolean; refill_days: number;
 }): EmbedBuilder {
-  const emoji    = getCategoryEmoji(service.category);
-  const infoText = parseServiceInfo(service.name, service.description);
-  const rules    = GENERAL_RULES.map((r, i) => `${i + 1}. ${r}`).join('\n');
+  const emoji = getCategoryEmoji(service.category);
+  const rules = GENERAL_RULES.map((r, i) => `${i + 1}. ${r}`).join('\n');
 
-  return new EmbedBuilder()
+  // Deskripsi yang ditampilkan: prioritaskan deskripsi manual admin (disalin dari web IndoSMM),
+  // lalu deskripsi dari provider. Bila keduanya kosong, pakai ringkasan hasil parse dari nama.
+  const rawDesc = (service.description_override?.trim() || service.description?.trim() || '');
+  const descField = rawDesc
+    ? truncateField(rawDesc)
+    : parseServiceInfo(service.name, service.description);
+
+  const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle(`${emoji} Detail Layanan`)
     .setDescription(`**${service.name}**`)
     .addFields(
       {
-        name:  '📋 Info Layanan',
-        value: infoText +
-               `\n\nMin      : **${service.min.toLocaleString('id-ID')}**\n` +
+        name:  '📝 Deskripsi Layanan',
+        value: descField,
+        inline: false,
+      },
+      {
+        name:  '📦 Ketentuan Order',
+        value: `Min      : **${service.min.toLocaleString('id-ID')}**\n` +
                `Max      : **${service.max.toLocaleString('id-ID')}**\n` +
-               `Harga    : **${formatRupiah(service.price_sell)}/1000**`,
+               `Harga    : **${formatRupiah(service.price_sell)}/1000**\n` +
+               `Refill   : **${service.refill && service.refill_days > 0 ? `${service.refill_days} hari` : 'Tidak tersedia'}**`,
         inline: false,
       },
       {
         name:  '⚠️ Syarat & Ketentuan — Wajib Dibaca Sebelum Order',
-        value: `> ⚠️ **BACA SEBELUM ORDER!**\n> Dengan melanjutkan order, kamu menyetujui semua ketentuan berikut:\n\n${rules}`,
+        value: truncateField(`> ⚠️ **BACA SEBELUM ORDER!**\n> Dengan melanjutkan order, kamu menyetujui semua ketentuan berikut:\n\n${rules}`),
         inline: false,
       },
     )
     .setFooter(footer())
     .setTimestamp();
+
+  return embed;
 }
 
 export function buildServiceDetailButtons(): ActionRowBuilder<ButtonBuilder> {
@@ -325,6 +345,7 @@ const STATUS_CONFIG: Record<string, { color: ColorResolvable; emoji: string; lab
   canceled:        { color: RED,    emoji: '❌', label: 'Dibatalkan'                 },
   failed:          { color: RED,    emoji: '❌', label: 'Gagal'                      },
   refill_pending:  { color: PURPLE, emoji: '🔄', label: 'Refill Sedang Diproses'     },
+  needs_review:    { color: ORANGE, emoji: '🔎', label: 'Perlu Verifikasi Admin'     },
   error:           { color: RED,    emoji: '❌', label: 'Error'                      },
 };
 
@@ -441,8 +462,7 @@ export function buildLowBalanceNotif(balance: number, threshold: number): EmbedB
     .setDescription(
       `Saldo akun IndoSMM kamu saat ini: **Rp ${balance.toLocaleString('id-ID')}**\n` +
       `Batas minimum: **Rp ${threshold.toLocaleString('id-ID')}**\n\n` +
-      `Segera deposit saldo agar order tidak gagal!\n` +
-      `Top up di: https://indosmm.id`
+      `Segera deposit saldo agar order tidak gagal!`
     )
     .setFooter(footer())
     .setTimestamp();

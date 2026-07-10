@@ -24,6 +24,9 @@ model Service {
   category            String
   name                String
   description         String?
+  // Deskripsi manual yang di-set admin (mis. disalin dari web IndoSMM). Bila diisi,
+  // deskripsi ini yang ditampilkan ke pembeli, menimpa description dari provider.
+  description_override String?
   min                 Int
   max                 Int       @default(0)
   price_buy           Float     @default(0)
@@ -67,6 +70,9 @@ model Ticket {
   archived_at       DateTime?
   closed_by         String?
   close_reason      String?
+  // Waktu terjadwal untuk menghapus channel Discord. Disimpan di DB (bukan setTimeout)
+  // agar penghapusan tetap terlaksana meski bot restart di tengah jeda tutup->hapus.
+  delete_channel_at DateTime?
 }
 
 model Order {
