@@ -8,9 +8,8 @@ import {
   buildOrderFailedNotif,
   buildLowBalanceNotif,
 } from '../../lib/embeds';
+import { getRefillExpiryDate } from '../../lib/pricing';
 import { ENV } from '../../config/env';
-
-const LOW_BALANCE_THRESHOLD = 50000; // Notif kalau saldo di bawah 50rb
 
 export async function handlePaymentApprove(interaction: ButtonInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
@@ -51,11 +50,11 @@ export async function handlePaymentApprove(interaction: ButtonInteraction): Prom
     }
 
     // Notif kalau saldo menipis
-    if (balance < LOW_BALANCE_THRESHOLD) {
+    if (balance < ENV.LOW_BALANCE_THRESHOLD) {
       try {
         const adminChannel = await interaction.client.channels.fetch(ENV.ADMIN_LOG_CHANNEL_ID).catch(() => null) as TextChannel | null;
         if (adminChannel) {
-          const lowBalEmbed = buildLowBalanceNotif(balance, LOW_BALANCE_THRESHOLD);
+          const lowBalEmbed = buildLowBalanceNotif(balance, ENV.LOW_BALANCE_THRESHOLD);
           await adminChannel.send({ embeds: [lowBalEmbed] });
         }
       } catch (e) {}
@@ -65,16 +64,24 @@ export async function handlePaymentApprove(interaction: ButtonInteraction): Prom
     // Lanjut approve meski cek saldo gagal
   }
 
-  try {
-    await prisma.manualPayment.update({
-      where: { id: payment.id },
-      data: {
-        status:      'approved',
-        approved_by: interaction.user.id,
-        approved_at: new Date(),
-      },
-    });
+  // ATOMIC LOCK: klaim payment ini secara atomik. updateMany dengan filter status:'pending'
+  // hanya sukses untuk SATU admin. Kalau dua admin klik Approve bersamaan, hanya satu yang
+  // menang → mencegah order ganda dikirim ke provider (double charge).
+  const claim = await prisma.manualPayment.updateMany({
+    where: { id: payment.id, status: 'pending' },
+    data: {
+      status:      'approved',
+      approved_by: interaction.user.id,
+      approved_at: new Date(),
+    },
+  });
 
+  if (claim.count === 0) {
+    await interaction.editReply({ content: '⚠️ Payment ini sedang/telah diproses oleh admin lain.' });
+    return;
+  }
+
+  try {
     await prisma.ticket.update({ where: { id: ticketId }, data: { status: 'paid' } });
     await prisma.order.update({ where: { id: order.id }, data: { status: 'paid', updated_at: new Date() } });
 
@@ -90,11 +97,16 @@ export async function handlePaymentApprove(interaction: ButtonInteraction): Prom
 
     const providerOrderId = String(result.order);
 
+    // #6: Masa garansi refill mulai dihitung SAAT order dikirim ke provider,
+    // bukan saat order dibuat, supaya countdown tidak berjalan sebelum order diproses.
+    const refillExpiry = getRefillExpiryDate(new Date(), service.refill_days);
+
     const updatedOrder = await prisma.order.update({
       where: { id: order.id },
       data: {
         status:            'submitted',
         provider_order_id: providerOrderId,
+        refill_expires_at: refillExpiry,
         updated_at:        new Date(),
       },
     });
@@ -164,6 +176,13 @@ export async function handlePaymentApprove(interaction: ButtonInteraction): Prom
 
   } catch (err: any) {
     logger.error('[PaymentApprove] Failed', { error: err.message });
+
+    // Submit ke provider gagal → kembalikan payment ke 'pending' agar admin bisa mencoba
+    // approve lagi setelah masalah (mis. saldo) diperbaiki.
+    await prisma.manualPayment.update({
+      where: { id: payment.id },
+      data:  { status: 'pending', approved_by: null, approved_at: null },
+    }).catch(() => {});
 
     await prisma.order.update({
       where: { id: order.id },

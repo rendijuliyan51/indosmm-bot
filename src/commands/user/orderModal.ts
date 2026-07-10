@@ -2,27 +2,39 @@ import { ModalSubmitInteraction, ChannelType, PermissionFlagsBits } from 'discor
 import { prisma } from '../../bot/client';
 import { ENV } from '../../config/env';
 import { logger } from '../../lib/logger';
-import { calculateTotal, getRefillExpiryDate } from '../../lib/pricing';
-import { buildInvoiceEmbed, buildAdminPaymentNotif } from '../../lib/embeds';
-import { selectedServiceMap } from './catalogSelectService';
+import { calculateTotal } from '../../lib/pricing';
+import { buildInvoiceEmbed, buildAdminNewOrderNotif } from '../../lib/embeds';
+import { clearSelection } from '../../lib/selectionStore';
 
-function isValidUrl(str: string): boolean {
-  try {
-    new URL(str);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
+/**
+ * Validasi target order.
+ * - Kalau input berupa URL → wajib http/https dengan hostname yang punya domain (mengandung titik).
+ * - Layanan berbasis konten (like/view/comment/share/play/repost/retweet/save/watch) WAJIB URL,
+ *   bukan sekadar username.
+ * - Selain itu boleh username: hanya huruf/angka/titik/underscore/dash (opsional diawali '@'),
+ *   panjang 2-100 karakter, tanpa spasi.
+ */
 function isValidTarget(target: string, serviceName: string): boolean {
-  const lower = serviceName.toLowerCase();
-  // Layanan yang pakai username (bukan URL)
-  const usernameServices = ['telegram', 'twitter', 'instagram', 'tiktok', 'spotify', 'youtube'];
-  const isUsername = usernameServices.some(s => lower.includes(s));
-  if (isUsername && !target.startsWith('http')) return true; // username ok
-  if (target.startsWith('http')) return isValidUrl(target);
-  return target.length > 2; // minimal 3 karakter
+  const t = target.trim();
+  if (!t) return false;
+
+  const lower  = serviceName.toLowerCase();
+  const isUrl  = /^https?:\/\//i.test(t);
+  const needsUrl = /(like|view|comment|share|play|repost|retweet|save|watch|impression)/i.test(lower);
+
+  if (isUrl) {
+    try {
+      const u = new URL(t);
+      if (!/^https?:$/.test(u.protocol)) return false;
+      if (!u.hostname.includes('.')) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  if (needsUrl) return false; // layanan metrik konten wajib link, bukan username
+  return /^@?[A-Za-z0-9._-]{2,100}$/.test(t);
 }
 
 export async function handleOrderModal(interaction: ModalSubmitInteraction): Promise<void> {
@@ -77,10 +89,11 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
     return;
   }
 
-  const total        = calculateTotal(service.price_sell, quantity);
-  const buyTotal     = calculateTotal(service.price_buy, quantity);
-  const profit       = total - buyTotal;
-  const refillExpiry = getRefillExpiryDate(new Date(), service.refill_days);
+  const total    = calculateTotal(service.price_sell, quantity);
+  const buyTotal = calculateTotal(service.price_buy, quantity);
+  const profit   = total - buyTotal;
+  // #6: refill_expires_at TIDAK diset di sini. Countdown garansi dimulai saat order
+  // di-approve & dikirim ke provider (lihat paymentHandler).
 
   try {
     const guild = interaction.guild!;
@@ -122,7 +135,6 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
         sell_price:        total,
         profit:            profit,
         status:            'waiting_payment',
-        refill_expires_at: refillExpiry,
       },
     });
 
@@ -161,24 +173,26 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
       },
     });
 
-    // Notif admin
+    // Notif admin (informatif). Tombol Approve/Reject baru dikirim SETELAH user upload
+    // bukti transfer (lihat handler messageCreate) agar admin tidak approve tanpa bukti.
     try {
       const { client } = await import('../../bot/client');
       const adminChannel = await client.channels.fetch(ENV.ADMIN_LOG_CHANNEL_ID).catch(() => null) as any;
       if (adminChannel) {
-        const { embed, row } = buildAdminPaymentNotif({
+        const embed = buildAdminNewOrderNotif({
           ticketId:    ticket.id,
           userId:      interaction.user.id,
           serviceName: service.name,
           total:       total,
+          channelId:   ticketChannel.id,
         });
-        await adminChannel.send({ embeds: [embed], components: [row] });
+        await adminChannel.send({ embeds: [embed] });
       }
     } catch (e) {
       logger.error('[OrderModal] Failed to notify admin', { error: (e as any).message });
     }
 
-    selectedServiceMap.delete(interaction.user.id);
+    await clearSelection(interaction.user.id);
 
     await interaction.editReply({
       content: `✅ Ticket berhasil dibuat! Lanjutkan di <#${ticketChannel.id}>`,

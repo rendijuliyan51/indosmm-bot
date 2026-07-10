@@ -40,6 +40,26 @@ export async function runServiceSync(): Promise<void> {
       const sellPrice  = calculateSellPrice(buyPrice);
       const refill     = parseRefillSupport(s.name) || s.refill;
       const refillDays = parseRefillDays(s.name);
+      const min        = parseInt(s.min);
+      const max        = parseInt(s.max);
+
+      const existing = await prisma.service.findUnique({
+        where: { provider_service_id: String(s.service) },
+      });
+
+      // Deteksi perubahan pada data provider agar snapshot hanya ditulis saat ada perubahan
+      // (menghindari ribuan baris snapshot identik tiap sync).
+      const changed =
+        !existing ||
+        existing.name        !== s.name ||
+        existing.category    !== s.category ||
+        existing.description !== (s.description || null) ||
+        existing.min         !== min ||
+        existing.max         !== max ||
+        existing.price_buy   !== buyPrice ||
+        existing.refill      !== refill ||
+        existing.refill_days !== refillDays ||
+        !existing.active;
 
       await prisma.service.upsert({
         where:  { provider_service_id: String(s.service) },
@@ -47,8 +67,8 @@ export async function runServiceSync(): Promise<void> {
           name:           s.name,
           category:       s.category,
           description:    s.description || null,
-          min:            parseInt(s.min),
-          max:            parseInt(s.max),
+          min,
+          max,
           price_buy:      buyPrice,
           price_sell:     sellPrice,
           refill:         refill,
@@ -63,8 +83,8 @@ export async function runServiceSync(): Promise<void> {
           category:            s.category,
           name:                s.name,
           description:         s.description || null,
-          min:                 parseInt(s.min),
-          max:                 parseInt(s.max),
+          min,
+          max,
           price_buy:           buyPrice,
           price_sell:          sellPrice,
           markup_type:         'percentage',
@@ -76,13 +96,15 @@ export async function runServiceSync(): Promise<void> {
         },
       });
 
-      await prisma.serviceSnapshot.create({
-        data: {
-          service_id: String(s.service),
-          raw_json:   JSON.stringify(s),
-          fetched_at: startedAt,
-        },
-      });
+      if (changed) {
+        await prisma.serviceSnapshot.create({
+          data: {
+            service_id: String(s.service),
+            raw_json:   JSON.stringify(s),
+            fetched_at: startedAt,
+          },
+        });
+      }
     }
 
     await prisma.service.updateMany({

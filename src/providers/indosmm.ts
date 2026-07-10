@@ -32,6 +32,11 @@ export interface IndoSMMRefillResult {
   error?:  string;
 }
 
+export interface IndoSMMRefillStatus {
+  status?: string;
+  error?:  string;
+}
+
 async function request(data: Record<string, unknown>, retries = 3): Promise<unknown> {
   for (let i = 0; i < retries; i++) {
     try {
@@ -75,6 +80,17 @@ export const indosmm = {
   async requestRefill(orderId: string): Promise<IndoSMMRefillResult> {
     const res = await request({ action: 'refill', order: orderId });
     return res as IndoSMMRefillResult;
+  },
+
+  // Cek status refill pakai refill ID (BUKAN order ID). IndoSMM: action=refill_status, refill=<id>.
+  // Respons bisa berupa objek { status } atau array [{ refill, status }].
+  async getRefillStatus(refillId: string): Promise<IndoSMMRefillStatus> {
+    const res = await request({ action: 'refill_status', refill: refillId });
+    if (Array.isArray(res)) {
+      const first = res[0] as { status?: string; error?: string } | undefined;
+      return { status: first?.status, error: first?.error };
+    }
+    return res as IndoSMMRefillStatus;
   },
 
   async cancelOrders(orderIds: string[]): Promise<unknown> {

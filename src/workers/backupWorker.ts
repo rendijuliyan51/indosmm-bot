@@ -1,10 +1,20 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { logger } from '../lib/logger';
+import { ENV } from '../config/env';
 
-const DB_PATH     = path.resolve('./dev.db');
+// Ambil path file DB dari DATABASE_URL (format sqlite: "file:./dev.db").
+function resolveDbPath(): string {
+  const url = ENV.DATABASE_URL || 'file:./dev.db';
+  const filePart = url.startsWith('file:') ? url.slice('file:'.length) : url;
+  return path.resolve(filePart);
+}
+
+const DB_PATH     = resolveDbPath();
 const BACKUP_DIR  = path.resolve('./backups');
 const MAX_BACKUPS = 7;
+// WIB adalah UTC+7 tetap (tanpa DST).
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 export async function runDatabaseBackup(): Promise<void> {
   try {
@@ -40,16 +50,10 @@ export async function runDatabaseBackup(): Promise<void> {
   }
 }
 
-// Jadwalkan backup jam 00.00 WIB
+// Jadwalkan backup jam 00.00 WIB.
+// Dihitung murni dari epoch UTC + offset WIB tetap agar tidak bergantung timezone server.
 export function scheduleBackup(): void {
-  const now     = new Date();
-  const wibNow  = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
-  const nextRun = new Date(wibNow);
-
-  nextRun.setHours(0, 0, 0, 0);
-  if (nextRun <= wibNow) nextRun.setDate(nextRun.getDate() + 1);
-
-  const msUntilMidnight = nextRun.getTime() - wibNow.getTime();
+  const msUntilMidnight = msUntilNextWibMidnight();
 
   logger.info(`[Backup] Next backup scheduled in ${Math.round(msUntilMidnight / 1000 / 60)} minutes`);
 
@@ -57,4 +61,11 @@ export function scheduleBackup(): void {
     runDatabaseBackup();
     setInterval(runDatabaseBackup, 24 * 60 * 60 * 1000);
   }, msUntilMidnight);
+}
+
+export function msUntilNextWibMidnight(nowMs: number = Date.now()): number {
+  // Geser ke "wall clock" WIB, lalu cari sisa waktu menuju batas hari berikutnya.
+  const wibMs        = nowMs + WIB_OFFSET_MS;
+  const msIntoWibDay = ((wibMs % 86_400_000) + 86_400_000) % 86_400_000;
+  return 86_400_000 - msIntoWibDay;
 }

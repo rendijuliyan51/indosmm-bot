@@ -21,6 +21,7 @@ export const ENV = {
   INDOSMM_API_KEY:      required('INDOSMM_API_KEY'),
   QRIS_IMAGE_URL:       required('QRIS_IMAGE_URL'),
   MARKUP_PERCENTAGE:    parseFloat(optional('MARKUP_PERCENTAGE', '40')),
+  LOW_BALANCE_THRESHOLD: parseFloat(optional('LOW_BALANCE_THRESHOLD', '50000')),
   DATABASE_URL:         optional('DATABASE_URL', 'file:./dev.db'),
   TZ:                   optional('TZ', 'Asia/Jakarta'),
 

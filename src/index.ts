@@ -10,17 +10,17 @@ import { runCatalogUpdate } from './workers/catalogWorker';
 import { runTicketGarbageCollector, handleMemberLeave } from './workers/ticketGarbageWorker';
 import { runDatabaseBackup, scheduleBackup } from './workers/backupWorker';
 import { REST, Routes, SlashCommandBuilder, SlashCommandSubcommandBuilder, GuildMember, TextChannel } from 'discord.js';
+import { execFileSync } from 'child_process';
 import { indosmm } from './providers/indosmm';
 import { buildLowBalanceNotif } from './lib/embeds';
-
-const LOW_BALANCE_THRESHOLD = 50000;
+import { handleMessageCreate } from './bot/handlers/messageCreate';
 
 async function checkBalance(): Promise<void> {
   try {
     const balance = await indosmm.getBalance();
-    if (balance < LOW_BALANCE_THRESHOLD) {
+    if (balance < ENV.LOW_BALANCE_THRESHOLD) {
       const adminChannel = await client.channels.fetch(ENV.ADMIN_LOG_CHANNEL_ID).catch(() => null) as TextChannel | null;
-      if (adminChannel) await adminChannel.send({ embeds: [buildLowBalanceNotif(balance, LOW_BALANCE_THRESHOLD)] });
+      if (adminChannel) await adminChannel.send({ embeds: [buildLowBalanceNotif(balance, ENV.LOW_BALANCE_THRESHOLD)] });
       logger.warn(`[Balance] Low balance: Rp ${balance}`);
     }
   } catch (err: any) {
@@ -63,29 +63,42 @@ async function registerCommands(): Promise<void> {
       ),
   ].map(c => c.toJSON());
 
-  // Gunakan token langsung dari client yang sudah login
   const rest = new REST({ timeout: 15000 }).setToken(ENV.DISCORD_TOKEN);
-  await rest.put(
-    Routes.applicationGuildCommands(ENV.DISCORD_CLIENT_ID, client.guilds.cache.first()!.id),
-    { body: commands }
-  );
-  logger.info('[Commands] Slash commands registered successfully');
+
+  const guildIds = [...client.guilds.cache.keys()];
+  if (guildIds.length === 0) {
+    logger.warn('[Commands] Bot belum berada di guild manapun — command tidak didaftarkan. Undang bot ke server lalu restart.');
+    return;
+  }
+
+  // Daftarkan guild commands (instan) ke SEMUA guild tempat bot berada.
+  let registered = 0;
+  for (const guildId of guildIds) {
+    try {
+      await rest.put(
+        Routes.applicationGuildCommands(ENV.DISCORD_CLIENT_ID, guildId),
+        { body: commands },
+      );
+      registered++;
+    } catch (e: any) {
+      logger.error(`[Commands] Gagal daftar command di guild ${guildId}`, { error: e.message });
+    }
+  }
+  logger.info(`[Commands] Slash commands registered on ${registered}/${guildIds.length} guild(s)`);
 }
 
 async function initDatabase(): Promise<void> {
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "User" ("id" TEXT NOT NULL PRIMARY KEY, "discord_user_id" TEXT NOT NULL UNIQUE, "username" TEXT NOT NULL, "role" TEXT NOT NULL DEFAULT 'user', "balance" REAL NOT NULL DEFAULT 0, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "Service" ("id" TEXT NOT NULL PRIMARY KEY, "provider_name" TEXT NOT NULL, "provider_service_id" TEXT NOT NULL UNIQUE, "category" TEXT NOT NULL, "name" TEXT NOT NULL, "description" TEXT, "min" INTEGER NOT NULL, "max" INTEGER NOT NULL DEFAULT 0, "price_buy" REAL NOT NULL DEFAULT 0, "price_sell" REAL NOT NULL DEFAULT 0, "markup_type" TEXT NOT NULL DEFAULT 'percentage', "markup_value" REAL NOT NULL DEFAULT 40, "refill" INTEGER NOT NULL DEFAULT 0, "refill_days" INTEGER NOT NULL DEFAULT 0, "active" INTEGER NOT NULL DEFAULT 1, "last_synced_at" DATETIME, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "ServiceSnapshot" ("id" TEXT NOT NULL PRIMARY KEY, "service_id" TEXT NOT NULL, "raw_json" TEXT NOT NULL, "fetched_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "CatalogMessage" ("id" TEXT NOT NULL PRIMARY KEY, "guild_id" TEXT NOT NULL, "channel_id" TEXT NOT NULL, "message_id" TEXT, "message_type" TEXT NOT NULL DEFAULT 'catalog', "last_hash" TEXT, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "Ticket" ("id" TEXT NOT NULL PRIMARY KEY, "discord_user_id" TEXT NOT NULL, "guild_id" TEXT NOT NULL, "ticket_channel_id" TEXT NOT NULL UNIQUE, "status" TEXT NOT NULL DEFAULT 'open', "subject" TEXT NOT NULL, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "closed_at" DATETIME, "archived_at" DATETIME, "closed_by" TEXT, "close_reason" TEXT)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "Order" ("id" TEXT NOT NULL PRIMARY KEY, "ticket_id" TEXT NOT NULL, "user_id" TEXT NOT NULL, "service_id" TEXT NOT NULL, "provider_order_id" TEXT, "target_link" TEXT NOT NULL, "quantity" INTEGER NOT NULL, "buy_price" REAL NOT NULL, "sell_price" REAL NOT NULL, "profit" REAL NOT NULL, "status" TEXT NOT NULL DEFAULT 'waiting_payment', "start_count" INTEGER, "remains" INTEGER, "refill_status" TEXT, "refill_expires_at" DATETIME, "notes" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "OrderLog" ("id" TEXT NOT NULL PRIMARY KEY, "order_id" TEXT NOT NULL, "old_status" TEXT, "new_status" TEXT NOT NULL, "message" TEXT, "raw_response_json" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "ManualPayment" ("id" TEXT NOT NULL PRIMARY KEY, "user_id" TEXT NOT NULL, "ticket_id" TEXT NOT NULL, "amount" REAL NOT NULL, "method" TEXT NOT NULL DEFAULT 'qris', "proof_url" TEXT, "status" TEXT NOT NULL DEFAULT 'pending', "approved_by" TEXT, "approved_at" DATETIME, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "BotMessage" ("id" TEXT NOT NULL PRIMARY KEY, "ticket_id" TEXT NOT NULL, "message_type" TEXT NOT NULL, "channel_id" TEXT NOT NULL, "message_id" TEXT NOT NULL, "last_hash" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "ProviderSyncLog" ("id" TEXT NOT NULL PRIMARY KEY, "provider_name" TEXT NOT NULL, "status" TEXT NOT NULL, "message" TEXT, "raw_response_json" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "AdminAuditLog" ("id" TEXT NOT NULL PRIMARY KEY, "actor_user_id" TEXT NOT NULL, "action" TEXT NOT NULL, "target_type" TEXT, "target_id" TEXT, "details_json" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`;
-  await prisma.$executeRaw`CREATE TABLE IF NOT EXISTS "RefillRequest" ("id" TEXT NOT NULL PRIMARY KEY, "order_id" TEXT NOT NULL, "ticket_id" TEXT NOT NULL, "provider_refill_id" TEXT, "status" TEXT NOT NULL DEFAULT 'pending', "requested_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "completed_at" DATETIME, "notes" TEXT)`;
-  logger.info('[DB] All tables initialized');
+  // Sinkronkan skema database dari prisma/schema.prisma (satu-satunya sumber kebenaran).
+  // Menggantikan CREATE TABLE manual yang rawan drift terhadap schema.prisma.
+  // Pastikan DATABASE_URL tersedia untuk Prisma CLI.
+  process.env.DATABASE_URL = process.env.DATABASE_URL || ENV.DATABASE_URL;
+
+  execFileSync('npx', ['prisma', 'db', 'push', '--skip-generate'], {
+    stdio: 'inherit',
+    env:   process.env,
+  });
+
+  logger.info('[DB] Schema synced via prisma db push');
 }
 
 async function main(): Promise<void> {
@@ -145,6 +158,9 @@ async function main(): Promise<void> {
   });
 
   client.on('interactionCreate', handleInteraction);
+
+  // Tangkap bukti pembayaran (gambar) yang diupload user di channel ticket.
+  client.on('messageCreate', handleMessageCreate);
 
   try {
     logger.info('[Boot] Logging in to Discord...');
