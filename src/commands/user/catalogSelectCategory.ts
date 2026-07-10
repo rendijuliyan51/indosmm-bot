@@ -1,7 +1,8 @@
 import { StringSelectMenuInteraction } from 'discord.js';
 import { prisma } from '../../bot/client';
-import { buildServiceTypeSelectMenu } from '../../lib/embeds';
+import { buildServiceTypeSelectMenu, getCategoryEmoji } from '../../lib/embeds';
 import { mapCategory } from '../../workers/catalogWorker';
+import { setCategory } from '../../lib/selectionStore';
 
 const TYPE_KEYWORDS: Record<string, string[]> = {
   'Followers':    ['follower'],
@@ -24,16 +25,13 @@ export function detectServiceType(name: string): string {
   return 'Other';
 }
 
-// Store selected category per user
-export const selectedCategoryMap = new Map<string, string>();
-
 export async function handleCatalogSelectCategory(
   interaction: StringSelectMenuInteraction
 ): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
   const selectedLabel = interaction.values[0];
-  selectedCategoryMap.set(interaction.user.id, selectedLabel);
+  await setCategory(interaction.user.id, selectedLabel);
 
   const allServices = await prisma.service.findMany({
     where:   { active: true },
@@ -64,17 +62,4 @@ export async function handleCatalogSelectCategory(
     content:    `${getCategoryEmoji(selectedLabel)} **${selectedLabel}** — Pilih jenis layanan:`,
     components: [selectRow],
   });
-}
-
-function getCategoryEmoji(cat: string): string {
-  const map: Record<string, string> = {
-    instagram: '📸', tiktok: '🎵', telegram: '✈️', spotify: '🎧',
-    'snack video': '🍿', youtube: '▶️', twitter: '🐦', shopee: '🛍️',
-    facebook: '👤', roblox: '🎮', github: '💻',
-  };
-  const lower = cat.toLowerCase();
-  for (const [k, v] of Object.entries(map)) {
-    if (lower.includes(k)) return v;
-  }
-  return '🔷';
 }

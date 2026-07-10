@@ -6,15 +6,15 @@ import {
 } from 'discord.js';
 import { logger } from '../../lib/logger';
 import { handleAdminCommand } from '../../commands/admin/admin';
-import { handleCatalogSelectCategory, selectedCategoryMap } from '../../commands/user/catalogSelectCategory';
-import { handleCatalogSelectType } from '../../commands/user/catalogSelectType';
+import { handleCatalogSelectCategory } from '../../commands/user/catalogSelectCategory';
+import { handleCatalogSelectType, handleServicePage } from '../../commands/user/catalogSelectType';
 import { handleCatalogSelectService } from '../../commands/user/catalogSelectService';
 import { handleOrderNow } from '../../commands/user/orderNow';
 import { handleOrderModal } from '../../commands/user/orderModal';
 import { handlePaymentApprove, handlePaymentReject } from '../../commands/admin/paymentHandler';
 import { handleRefillRequest } from '../../commands/user/refillRequest';
 import { handleTicketClose } from '../../commands/user/ticketClose';
-import { selectedServiceMap } from '../../commands/user/catalogSelectService';
+import { clearSelection } from '../../lib/selectionStore';
 import { ENV } from '../../config/env';
 
 function isAdmin(interaction: Interaction): boolean {
@@ -55,9 +55,9 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     if (interaction.isButton()) {
       const i = interaction as ButtonInteraction;
       if (i.customId === 'catalog_order_now') { await handleOrderNow(i); return; }
+      if (i.customId.startsWith('catalog_svc_page_')) { await handleServicePage(i); return; }
       if (i.customId === 'catalog_cancel_order') {
-        selectedServiceMap.delete(i.user.id);
-        selectedCategoryMap.delete(i.user.id);
+        await clearSelection(i.user.id);
         await i.reply({ content: '❌ Order dibatalkan.', ephemeral: true });
         return;
       }

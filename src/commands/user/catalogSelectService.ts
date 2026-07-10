@@ -1,8 +1,7 @@
 import { StringSelectMenuInteraction } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { buildServiceDetailEmbed, buildServiceDetailButtons } from '../../lib/embeds';
-
-export const selectedServiceMap = new Map<string, string>();
+import { setService } from '../../lib/selectionStore';
 
 export async function handleCatalogSelectService(
   interaction: StringSelectMenuInteraction
@@ -15,7 +14,7 @@ export async function handleCatalogSelectService(
     return;
   }
 
-  selectedServiceMap.set(interaction.user.id, serviceId);
+  await setService(interaction.user.id, serviceId);
 
   const embed = buildServiceDetailEmbed(service);
   const row   = buildServiceDetailButtons();

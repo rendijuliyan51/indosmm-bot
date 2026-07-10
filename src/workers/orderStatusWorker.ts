@@ -176,11 +176,12 @@ async function checkRefillStatuses(client: Client): Promise<void> {
       try {
         if (!refill.provider_refill_id) continue;
 
-        const res = await indosmm.getOrderStatus(refill.provider_refill_id);
+        // Gunakan endpoint refill_status (bukan status order) dengan refill ID.
+        const res = await indosmm.getRefillStatus(refill.provider_refill_id);
         if (!res || res.error) continue;
 
         const newStatus = (res.status ?? '').toLowerCase().trim();
-        if (newStatus === refill.status) continue;
+        if (!newStatus || newStatus === refill.status) continue;
 
         await prisma.refillRequest.update({
           where: { id: refill.id },

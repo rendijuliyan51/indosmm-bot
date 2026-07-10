@@ -1,9 +1,9 @@
 import { ButtonInteraction, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from 'discord.js';
-import { selectedServiceMap } from './catalogSelectService';
+import { getSelection } from '../../lib/selectionStore';
 import { prisma } from '../../bot/client';
 
 export async function handleOrderNow(interaction: ButtonInteraction): Promise<void> {
-  const serviceId = selectedServiceMap.get(interaction.user.id);
+  const { service_id: serviceId } = await getSelection(interaction.user.id);
 
   if (!serviceId) {
     await interaction.reply({

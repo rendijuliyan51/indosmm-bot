@@ -5,16 +5,15 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
 }
 
-model User {
-  id              String   @id @default(uuid())
-  discord_user_id String   @unique
-  username        String
-  role            String   @default("user")
-  balance         Float    @default(0)
-  created_at      DateTime @default(now())
+// Menyimpan state pilihan katalog per user agar tahan restart bot.
+model CatalogSelection {
+  discord_user_id String   @id
+  category        String?
+  service_type    String?
+  service_id      String?
   updated_at      DateTime @updatedAt
 }
 

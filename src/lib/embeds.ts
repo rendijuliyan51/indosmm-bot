@@ -223,19 +223,54 @@ export function buildServiceTypeSelectMenu(types: string[]): ActionRowBuilder<St
   );
 }
 
-export function buildServiceSelectMenu(
-  services: { id: string; name: string; price_sell: number; min: number; max: number }[]
-): ActionRowBuilder<StringSelectMenuBuilder> {
-  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('catalog_select_service')
-      .setPlaceholder('Pilih Layanan')
-      .addOptions(services.slice(0, 25).map(s => ({
-        label:       truncateForDropdown(s.name),
-        value:       s.id,
-        description: `${formatRupiah(s.price_sell)}/1000 • Min: ${s.min.toLocaleString('id-ID')} • Max: ${s.max.toLocaleString('id-ID')}`,
-      })))
-  );
+export const SERVICE_PAGE_SIZE = 25;
+
+type ServiceOption = { id: string; name: string; price_sell: number; min: number; max: number };
+
+/**
+ * Membangun dropdown layanan dengan pagination. Discord membatasi 25 opsi per select menu,
+ * jadi jika layanan > 25 kita tampilkan per halaman + tombol navigasi Prev/Next.
+ * Mengembalikan array ActionRow (select + baris navigasi opsional).
+ */
+export function buildServiceSelectRows(
+  services: ServiceOption[],
+  page = 0,
+): ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] {
+  const totalPages = Math.max(1, Math.ceil(services.length / SERVICE_PAGE_SIZE));
+  const current    = Math.min(Math.max(0, page), totalPages - 1);
+  const start      = current * SERVICE_PAGE_SIZE;
+  const slice      = services.slice(start, start + SERVICE_PAGE_SIZE);
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId('catalog_select_service')
+    .setPlaceholder(totalPages > 1 ? `Pilih Layanan (Hal ${current + 1}/${totalPages})` : 'Pilih Layanan')
+    .addOptions(slice.map(s => ({
+      label:       truncateForDropdown(s.name),
+      value:       s.id,
+      description: `${formatRupiah(s.price_sell)}/1000 • Min: ${s.min.toLocaleString('id-ID')} • Max: ${s.max.toLocaleString('id-ID')}`,
+    })));
+
+  const rows: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [
+    new ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>().addComponents(select),
+  ];
+
+  if (totalPages > 1) {
+    const nav = new ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`catalog_svc_page_${current - 1}`)
+        .setLabel('◀ Sebelumnya')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(current === 0),
+      new ButtonBuilder()
+        .setCustomId(`catalog_svc_page_${current + 1}`)
+        .setLabel('Berikutnya ▶')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(current >= totalPages - 1),
+    );
+    rows.push(nav);
+  }
+
+  return rows;
 }
 
 export function buildInvoiceEmbed(data: {
@@ -423,6 +458,26 @@ export function buildRefillEmbed(data: {
       `Status   : **${data.status}**\n` +
       `Waktu    : ${data.requestedAt.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n` +
       `\`Order ID: ${data.orderId.slice(0, 8)}\``
+    )
+    .setFooter(footer())
+    .setTimestamp();
+}
+
+// Notif informatif saat order baru dibuat (belum ada bukti bayar) — TANPA tombol approve.
+export function buildAdminNewOrderNotif(data: {
+  ticketId: string; userId: string; serviceName: string; total: number; channelId: string;
+}): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(BLUE)
+    .setTitle('Order Baru — Menunggu Bukti Pembayaran')
+    .setDescription(
+      `User     : <@${data.userId}>\n` +
+      `Layanan  : ${data.serviceName}\n` +
+      `Total    : **${formatRupiah(data.total)}**\n` +
+      `Channel  : <#${data.channelId}>\n` +
+      `Waktu    : ${wibTime()}\n\n` +
+      `Tombol konfirmasi akan muncul setelah user mengupload bukti transfer.\n` +
+      `\`Ticket ID: ${data.ticketId.slice(0, 8)}\``
     )
     .setFooter(footer())
     .setTimestamp();
