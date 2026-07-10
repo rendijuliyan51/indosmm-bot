@@ -24,6 +24,9 @@ model Service {
   category            String
   name                String
   description         String?
+  // Deskripsi manual yang di-set admin (mis. disalin dari web IndoSMM). Bila diisi,
+  // deskripsi ini yang ditampilkan ke pembeli, menimpa description dari provider.
+  description_override String?
   min                 Int
   max                 Int       @default(0)
   price_buy           Float     @default(0)

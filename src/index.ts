@@ -59,6 +59,12 @@ async function registerCommands(): Promise<void> {
           .addStringOption(o => o.setName('order_id').setDescription('ID Order (8 karakter)').setRequired(true))
       )
       .addSubcommand((s: SlashCommandSubcommandBuilder) =>
+        s.setName('set-description')
+          .setDescription('Set/timpa deskripsi layanan (disalin dari web IndoSMM)')
+          .addStringOption(o => o.setName('service_id').setDescription('ID layanan provider (angka dari IndoSMM)').setRequired(true))
+          .addStringOption(o => o.setName('text').setDescription('Isi deskripsi. Ketik "-" untuk menghapus override').setRequired(true))
+      )
+      .addSubcommand((s: SlashCommandSubcommandBuilder) =>
         s.setName('audit-log').setDescription('Lihat audit log admin')
       ),
   ].map(c => c.toJSON());

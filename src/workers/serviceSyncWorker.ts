@@ -42,6 +42,8 @@ export async function runServiceSync(): Promise<void> {
       const refillDays = parseRefillDays(s.name);
       const min        = parseInt(s.min);
       const max        = parseInt(s.max);
+      // Deskripsi dari provider bisa datang lewat "description" atau "desc".
+      const providerDesc = (s.description ?? s.desc ?? '').trim() || null;
 
       const existing = await prisma.service.findUnique({
         where: { provider_service_id: String(s.service) },
@@ -63,7 +65,7 @@ export async function runServiceSync(): Promise<void> {
         !existing ||
         existing.name        !== s.name ||
         existing.category    !== s.category ||
-        existing.description !== (s.description || null) ||
+        existing.description !== providerDesc ||
         existing.min         !== min ||
         existing.max         !== max ||
         existing.price_buy   !== buyPrice ||
@@ -76,7 +78,8 @@ export async function runServiceSync(): Promise<void> {
         update: {
           name:           s.name,
           category:       s.category,
-          description:    s.description || null,
+          description:    providerDesc,
+          // description_override TIDAK diubah agar deskripsi manual admin tetap terjaga.
           min,
           max,
           price_buy:      buyPrice,
@@ -93,7 +96,7 @@ export async function runServiceSync(): Promise<void> {
           provider_service_id: String(s.service),
           category:            s.category,
           name:                s.name,
-          description:         s.description || null,
+          description:         providerDesc,
           min,
           max,
           price_buy:           buyPrice,

@@ -10,6 +10,9 @@ export interface IndoSMMService {
   min:         string;
   max:         string;
   refill:      boolean;
+  // Beberapa panel SMM mengembalikan deskripsi via field "desc", sebagian via "description".
+  // Kita dukung keduanya.
+  desc?:        string;
   description?: string;
 }
 

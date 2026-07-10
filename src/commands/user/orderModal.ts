@@ -37,6 +37,19 @@ function isValidTarget(target: string, serviceName: string): boolean {
   return /^@?[A-Za-z0-9._-]{2,100}$/.test(t);
 }
 
+// Normalisasi target untuk membandingkan kesamaan link/username (abaikan huruf besar/kecil,
+// trailing slash, dan protokol http/https).
+function normalizeTarget(target: string): string {
+  return target
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '');
+}
+
+// Status order yang dianggap SUDAH selesai/berhenti (boleh order ulang di link yang sama).
+const FINISHED_ORDER_STATUSES = ['completed', 'cancelled', 'canceled', 'failed', 'orphaned'];
+
 export async function handleOrderModal(interaction: ModalSubmitInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
@@ -85,6 +98,31 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
   if (existingTicket) {
     await interaction.editReply({
       content: `❌ Kamu masih punya ticket aktif di <#${existingTicket.ticket_channel_id}>.\nSelesaikan atau tutup ticket tersebut sebelum membuat order baru.`,
+    });
+    return;
+  }
+
+  // CEGAH ORDER DUPLIKAT: IndoSMM melarang menumpuk order pada LINK + LAYANAN yang sama
+  // selagi order sebelumnya belum selesai — order yang menumpuk bisa dianggap "completed"
+  // padahal belum tuntas. Jadi kita tolak bila masih ada order aktif untuk kombinasi ini
+  // (lintas semua pembeli, karena batasannya di sisi provider).
+  const normalizedNew = normalizeTarget(targetLink);
+  const activeSameService = await prisma.order.findMany({
+    where: {
+      service_id: service.id,
+      status:     { notIn: FINISHED_ORDER_STATUSES },
+    },
+    select: { target_link: true },
+  });
+
+  const duplicate = activeSameService.some(o => normalizeTarget(o.target_link) === normalizedNew);
+  if (duplicate) {
+    await interaction.editReply({
+      content:
+        '❌ Sudah ada order **aktif** untuk link + layanan yang sama.\n\n' +
+        'IndoSMM melarang menumpuk order di link & layanan yang sama sebelum order sebelumnya selesai ' +
+        '(order bisa dianggap selesai padahal belum tuntas). ' +
+        'Mohon tunggu sampai order sebelumnya **completed**, lalu order lagi.',
     });
     return;
   }

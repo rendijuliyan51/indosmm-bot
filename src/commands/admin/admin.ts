@@ -105,6 +105,48 @@ export async function handleAdminCommand(interaction: ChatInputCommandInteractio
     return;
   }
 
+  if (sub === 'set-description') {
+    const providerId = interaction.options.getString('service_id', true).trim();
+    const text       = interaction.options.getString('text', true).trim();
+
+    const service = await prisma.service.findUnique({
+      where: { provider_service_id: providerId },
+    });
+
+    if (!service) {
+      await interaction.editReply({ content: `❌ Layanan dengan provider service ID \`${providerId}\` tidak ditemukan. Pastikan sudah pernah sync.` });
+      return;
+    }
+
+    // "-" berarti hapus override, kembali memakai deskripsi bawaan provider.
+    const override = text === '-' ? null : text;
+
+    await prisma.service.update({
+      where: { id: service.id },
+      data:  { description_override: override, updated_at: new Date() },
+    });
+
+    // Reset hash katalog agar embed ikut refresh bila perlu.
+    await prisma.catalogMessage.updateMany({ data: { last_hash: null } });
+
+    await prisma.adminAuditLog.create({
+      data: {
+        actor_user_id: interaction.user.id,
+        action:        'set_description',
+        target_type:   'service',
+        target_id:     service.id,
+        details_json:  JSON.stringify({ provider_service_id: providerId, cleared: override === null }),
+      },
+    });
+
+    await interaction.editReply({
+      content: override === null
+        ? `✅ Deskripsi override untuk **${service.name}** dihapus. Kembali memakai deskripsi provider.`
+        : `✅ Deskripsi untuk **${service.name}** berhasil diperbarui.\n\n**Preview:**\n${override.slice(0, 500)}${override.length > 500 ? '…' : ''}`,
+    });
+    return;
+  }
+
   if (sub === 'audit-log') {
     const logs = await prisma.adminAuditLog.findMany({
       orderBy: { created_at: 'desc' },
