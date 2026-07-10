@@ -1,0 +1,156 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id              String   @id @default(uuid())
+  discord_user_id String   @unique
+  username        String
+  role            String   @default("user")
+  balance         Float    @default(0)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+}
+
+model Service {
+  id                  String    @id @default(uuid())
+  provider_name       String
+  provider_service_id String    @unique
+  category            String
+  name                String
+  description         String?
+  min                 Int
+  max                 Int       @default(0)
+  price_buy           Float     @default(0)
+  price_sell          Float     @default(0)
+  markup_type         String    @default("percentage")
+  markup_value        Float     @default(40)
+  refill              Boolean   @default(false)
+  refill_days         Int       @default(0)
+  active              Boolean   @default(true)
+  last_synced_at      DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+}
+
+model ServiceSnapshot {
+  id         String   @id @default(uuid())
+  service_id String
+  raw_json   String
+  fetched_at DateTime @default(now())
+}
+
+model CatalogMessage {
+  id           String   @id @default(uuid())
+  guild_id     String
+  channel_id   String
+  message_id   String?
+  message_type String   @default("catalog")
+  last_hash    String?
+  updated_at   DateTime @updatedAt
+}
+
+model Ticket {
+  id                String    @id @default(uuid())
+  discord_user_id   String
+  guild_id          String
+  ticket_channel_id String    @unique
+  status            String    @default("open")
+  subject           String
+  created_at        DateTime  @default(now())
+  closed_at         DateTime?
+  archived_at       DateTime?
+  closed_by         String?
+  close_reason      String?
+}
+
+model Order {
+  id                String    @id @default(uuid())
+  ticket_id         String
+  user_id           String
+  service_id        String
+  provider_order_id String?
+  target_link       String
+  quantity          Int
+  buy_price         Float
+  sell_price        Float
+  profit            Float
+  status            String    @default("waiting_payment")
+  start_count       Int?
+  remains           Int?
+  refill_status     String?
+  refill_expires_at DateTime?
+  notes             String?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+}
+
+model OrderLog {
+  id                String   @id @default(uuid())
+  order_id          String
+  old_status        String?
+  new_status        String
+  message           String?
+  raw_response_json String?
+  created_at        DateTime @default(now())
+}
+
+model ManualPayment {
+  id          String    @id @default(uuid())
+  user_id     String
+  ticket_id   String
+  amount      Float
+  method      String    @default("qris")
+  proof_url   String?
+  status      String    @default("pending")
+  approved_by String?
+  approved_at DateTime?
+  created_at  DateTime  @default(now())
+}
+
+model BotMessage {
+  id           String   @id @default(uuid())
+  ticket_id    String
+  message_type String
+  channel_id   String
+  message_id   String
+  last_hash    String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+}
+
+model ProviderSyncLog {
+  id                String   @id @default(uuid())
+  provider_name     String
+  status            String
+  message           String?
+  raw_response_json String?
+  created_at        DateTime @default(now())
+}
+
+model AdminAuditLog {
+  id            String   @id @default(uuid())
+  actor_user_id String
+  action        String
+  target_type   String?
+  target_id     String?
+  details_json  String?
+  created_at    DateTime @default(now())
+}
+
+model RefillRequest {
+  id                 String    @id @default(uuid())
+  order_id           String
+  ticket_id          String
+  provider_refill_id String?
+  status             String    @default("pending")
+  requested_at       DateTime  @default(now())
+  completed_at       DateTime?
+  notes              String?
+}
