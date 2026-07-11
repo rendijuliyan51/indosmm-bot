@@ -1,10 +1,10 @@
-import { ChatInputCommandInteraction } from 'discord.js';
+import { ChatInputCommandInteraction, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { buildOrderProgressEmbed } from '../../lib/embeds';
 
 export async function handleTicketCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   if (sub === 'status') {
     const tickets = await prisma.ticket.findMany({

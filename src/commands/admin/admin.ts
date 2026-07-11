@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction, TextChannel } from 'discord.js';
+import { ChatInputCommandInteraction, TextChannel, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { logger } from '../../lib/logger';
 import { runServiceSync } from '../../workers/serviceSyncWorker';
@@ -8,7 +8,7 @@ import { scheduleChannelDeletion } from '../../lib/ticketLifecycle';
 
 export async function handleAdminCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   if (sub === 'sync-services') {
     await interaction.editReply({ content: '🔄 Syncing services...' });

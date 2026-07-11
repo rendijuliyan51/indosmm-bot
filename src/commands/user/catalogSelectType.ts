@@ -1,4 +1,4 @@
-import { StringSelectMenuInteraction, ButtonInteraction } from 'discord.js';
+import { StringSelectMenuInteraction, ButtonInteraction, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { buildServiceSelectRows } from '../../lib/embeds';
 import { mapCategory } from '../../workers/catalogWorker';
@@ -27,7 +27,7 @@ export async function getFilteredServices(category: string, type: string): Promi
 export async function handleCatalogSelectType(
   interaction: StringSelectMenuInteraction
 ): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const selectedType = interaction.values[0];
   const selection    = await getSelection(interaction.user.id);

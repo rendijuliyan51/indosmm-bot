@@ -1,4 +1,4 @@
-import { ButtonInteraction, TextChannel, PermissionFlagsBits } from 'discord.js';
+import { ButtonInteraction, TextChannel, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { logger } from '../../lib/logger';
 import { buildTicketClosedEmbed } from '../../lib/embeds';
@@ -14,7 +14,7 @@ function isAdmin(interaction: ButtonInteraction): boolean {
 }
 
 export async function handleTicketClose(interaction: ButtonInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const ticketId = interaction.customId.replace('ticket_close_', '');
 

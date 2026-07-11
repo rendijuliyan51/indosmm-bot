@@ -3,6 +3,7 @@ import {
   StringSelectMenuInteraction,
   ButtonInteraction,
   ModalSubmitInteraction,
+  MessageFlags,
 } from 'discord.js';
 import { logger } from '../../lib/logger';
 import { handleAdminCommand } from '../../commands/admin/admin';
@@ -30,7 +31,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'admin') {
         if (!isAdmin(interaction)) {
-          await interaction.reply({ content: '❌ Kamu tidak memiliki akses admin.', ephemeral: true });
+          await interaction.reply({ content: '❌ Kamu tidak memiliki akses admin.', flags: MessageFlags.Ephemeral });
           return;
         }
         await handleAdminCommand(interaction);
@@ -58,16 +59,16 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       if (i.customId.startsWith('catalog_svc_page_')) { await handleServicePage(i); return; }
       if (i.customId === 'catalog_cancel_order') {
         await clearSelection(i.user.id);
-        await i.reply({ content: '❌ Order dibatalkan.', ephemeral: true });
+        await i.reply({ content: '❌ Order dibatalkan.', flags: MessageFlags.Ephemeral });
         return;
       }
       if (i.customId.startsWith('payment_approve_')) {
-        if (!isAdmin(i)) { await i.reply({ content: '❌ Hanya admin.', ephemeral: true }); return; }
+        if (!isAdmin(i)) { await i.reply({ content: '❌ Hanya admin.', flags: MessageFlags.Ephemeral }); return; }
         await handlePaymentApprove(i);
         return;
       }
       if (i.customId.startsWith('payment_reject_')) {
-        if (!isAdmin(i)) { await i.reply({ content: '❌ Hanya admin.', ephemeral: true }); return; }
+        if (!isAdmin(i)) { await i.reply({ content: '❌ Hanya admin.', flags: MessageFlags.Ephemeral }); return; }
         await handlePaymentReject(i);
         return;
       }
@@ -91,7 +92,7 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         : (interaction as any).type;
     logger.error('[Interaction] Unhandled error', { kind, error: err?.message, stack: err?.stack });
     try {
-      const reply = { content: '❌ Terjadi kesalahan, coba lagi.', ephemeral: true };
+      const reply = { content: '❌ Terjadi kesalahan, coba lagi.', flags: MessageFlags.Ephemeral };
       if ('replied' in interaction && (interaction as any).replied) return;
       if ('deferred' in interaction && (interaction as any).deferred) {
         await (interaction as any).editReply(reply);
