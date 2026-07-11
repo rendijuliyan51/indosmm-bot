@@ -1,16 +1,8 @@
-import { promises as fs } from 'fs';
+import { promises as fs, existsSync } from 'fs';
 import path from 'path';
 import { logger } from '../lib/logger';
-import { ENV } from '../config/env';
+import { resolveDbFilePath } from '../lib/dbPath';
 
-// Ambil path file DB dari DATABASE_URL (format sqlite: "file:./dev.db").
-function resolveDbPath(): string {
-  const url = ENV.DATABASE_URL || 'file:./dev.db';
-  const filePart = url.startsWith('file:') ? url.slice('file:'.length) : url;
-  return path.resolve(filePart);
-}
-
-const DB_PATH     = resolveDbPath();
 const BACKUP_DIR  = path.resolve('./backups');
 const MAX_BACKUPS = 7;
 // WIB adalah UTC+7 tetap (tanpa DST).
@@ -18,6 +10,13 @@ const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 export async function runDatabaseBackup(): Promise<void> {
   try {
+    // Resolusi path DB SAAT backup (bukan saat modul dimuat), dan cari lokasi file yang benar.
+    const dbPath = resolveDbFilePath();
+    if (!existsSync(dbPath)) {
+      logger.warn('[Backup] File DB belum ada, backup dilewati', { dbPath });
+      return;
+    }
+
     await fs.mkdir(BACKUP_DIR, { recursive: true });
 
     const now     = new Date().toLocaleString('id-ID', {
@@ -28,8 +27,8 @@ export async function runDatabaseBackup(): Promise<void> {
 
     const backupPath = path.join(BACKUP_DIR, `dev.db.backup.${now}`);
 
-    await fs.copyFile(DB_PATH, backupPath);
-    logger.info(`[Backup] Database backed up to ${backupPath}`);
+    await fs.copyFile(dbPath, backupPath);
+    logger.info(`[Backup] Database backed up to ${backupPath} (dari ${dbPath})`);
 
     // Hapus backup lama, simpan hanya MAX_BACKUPS terakhir
     const files = await fs.readdir(BACKUP_DIR);

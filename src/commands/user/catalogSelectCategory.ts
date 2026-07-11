@@ -34,7 +34,7 @@ export async function handleCatalogSelectCategory(
   await setCategory(interaction.user.id, selectedLabel);
 
   const allServices = await prisma.service.findMany({
-    where:   { active: true },
+    where:   { active: true, hidden: false },
     orderBy: { price_sell: 'asc' },
   });
 

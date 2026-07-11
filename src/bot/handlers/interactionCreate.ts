@@ -15,6 +15,9 @@ import { handleOrderModal } from '../../commands/user/orderModal';
 import { handlePaymentApprove, handlePaymentReject } from '../../commands/admin/paymentHandler';
 import { handleRefillRequest } from '../../commands/user/refillRequest';
 import { handleTicketClose } from '../../commands/user/ticketClose';
+import { handleOrderCommand } from '../../commands/user/orderCommand';
+import { handleCatalogSearchButton, handleCatalogSearchModal } from '../../commands/user/catalogSearch';
+import { handleReviewStart, handleReviewModal } from '../../commands/user/review';
 import { clearSelection } from '../../lib/selectionStore';
 import { ENV } from '../../config/env';
 
@@ -42,6 +45,10 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         await handleTicketCommand(interaction);
         return;
       }
+      if (interaction.commandName === 'order') {
+        await handleOrderCommand(interaction);
+        return;
+      }
       return;
     }
 
@@ -56,7 +63,9 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     if (interaction.isButton()) {
       const i = interaction as ButtonInteraction;
       if (i.customId === 'catalog_order_now') { await handleOrderNow(i); return; }
+      if (i.customId === 'catalog_search') { await handleCatalogSearchButton(i); return; }
       if (i.customId.startsWith('catalog_svc_page_')) { await handleServicePage(i); return; }
+      if (i.customId.startsWith('review_start_')) { await handleReviewStart(i); return; }
       if (i.customId === 'catalog_cancel_order') {
         await clearSelection(i.user.id);
         await i.reply({ content: '❌ Order dibatalkan.', flags: MessageFlags.Ephemeral });
@@ -79,7 +88,9 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
 
     if (interaction.isModalSubmit()) {
       const i = interaction as ModalSubmitInteraction;
-      if (i.customId.startsWith('order_modal_')) { await handleOrderModal(i); return; }
+      if (i.customId.startsWith('order_modal_'))     { await handleOrderModal(i); return; }
+      if (i.customId === 'catalog_search_modal')     { await handleCatalogSearchModal(i); return; }
+      if (i.customId.startsWith('review_modal_'))    { await handleReviewModal(i); return; }
       return;
     }
 
