@@ -52,13 +52,13 @@ export async function runCatalogUpdate(client: Client): Promise<void> {
     const categories = [...categorySet].sort();
     if (categories.length === 0) return;
 
-    const hash = createHash('md5').update(JSON.stringify(categories)).digest('hex');
+    const hash = createHash('md5').update(JSON.stringify(categories) + `|${services.length}`).digest('hex');
     if (conf.last_hash === hash) return;
 
     const channel = await client.channels.fetch(conf.channel_id).catch(() => null) as TextChannel | null;
     if (!channel) { logger.error('[Catalog] Channel not found'); return; }
 
-    const embed     = buildCatalogEmbed(categories);
+    const embed     = buildCatalogEmbed(categories, services.length);
     const row       = buildCategorySelectMenu(categories);
     const searchRow = buildCatalogSearchRow();
 

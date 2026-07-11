@@ -129,6 +129,11 @@ async function registerCommands(): Promise<void> {
           .addStringOption(o => o.setName('text').setDescription('Isi deskripsi. Ketik "-" untuk menghapus override').setRequired(true))
       )
       .addSubcommand((s: SlashCommandSubcommandBuilder) =>
+        s.setName('find-service')
+          .setDescription('Cari layanan & lihat Service ID-nya')
+          .addStringOption(o => o.setName('keyword').setDescription('Kata kunci: nama / kategori / ID layanan').setRequired(true))
+      )
+      .addSubcommand((s: SlashCommandSubcommandBuilder) =>
         s.setName('audit-log').setDescription('Lihat audit log admin')
       )
       .addSubcommand((s: SlashCommandSubcommandBuilder) =>

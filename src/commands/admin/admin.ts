@@ -4,7 +4,7 @@ import { logger } from '../../lib/logger';
 import { runServiceSync } from '../../workers/serviceSyncWorker';
 import { mapCategory } from '../../workers/catalogWorker';
 import { indosmm } from '../../providers/indosmm';
-import { buildTicketClosedEmbed, buildStatsEmbed } from '../../lib/embeds';
+import { buildTicketClosedEmbed, buildStatsEmbed, buildAdminServiceSearchEmbed } from '../../lib/embeds';
 import { scheduleChannelDeletion } from '../../lib/ticketLifecycle';
 
 export async function handleAdminCommand(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -177,6 +177,36 @@ export async function handleAdminCommand(interaction: ChatInputCommandInteractio
       content: override === null
         ? `✅ Deskripsi override untuk **${service.name}** dihapus. Kembali memakai deskripsi provider.`
         : `✅ Deskripsi untuk **${service.name}** berhasil diperbarui.\n\n**Preview:**\n${override.slice(0, 500)}${override.length > 500 ? '…' : ''}`,
+    });
+    return;
+  }
+
+  if (sub === 'find-service') {
+    const keyword = interaction.options.getString('keyword', true).trim().toLowerCase();
+    const terms   = keyword.split(/\s+/).filter(Boolean);
+
+    const all = await prisma.service.findMany({
+      where:   { active: true },
+      orderBy: { price_sell: 'asc' },
+    });
+
+    const matches = all.filter(s => {
+      const hay = `${s.provider_service_id} ${s.name} ${s.category}`.toLowerCase();
+      return terms.every(t => hay.includes(t));
+    });
+
+    const shown = matches.slice(0, 20);
+    await interaction.editReply({
+      embeds: [buildAdminServiceSearchEmbed(keyword, matches.length, shown.map(s => ({
+        providerServiceId: s.provider_service_id,
+        name:              s.name,
+        category:          s.category,
+        priceSell:         s.price_sell,
+        min:               s.min,
+        max:               s.max,
+        hidden:            s.hidden,
+        refill:            s.refill,
+      })))],
     });
     return;
   }
