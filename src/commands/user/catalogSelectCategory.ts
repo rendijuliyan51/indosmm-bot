@@ -1,4 +1,4 @@
-import { StringSelectMenuInteraction } from 'discord.js';
+import { StringSelectMenuInteraction, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { buildServiceTypeSelectMenu, getCategoryEmoji } from '../../lib/embeds';
 import { mapCategory } from '../../workers/catalogWorker';
@@ -28,7 +28,7 @@ export function detectServiceType(name: string): string {
 export async function handleCatalogSelectCategory(
   interaction: StringSelectMenuInteraction
 ): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const selectedLabel = interaction.values[0];
   await setCategory(interaction.user.id, selectedLabel);

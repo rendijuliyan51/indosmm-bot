@@ -12,6 +12,10 @@ const ALLOWED_CATEGORIES = [
 
 const MAX_PRICE_PER_1000 = 100000;
 
+// Jumlah operasi tulis per transaksi. Menulis dalam batch transaksi jauh lebih cepat di SQLite
+// (satu commit per batch, bukan satu commit per baris).
+const WRITE_CHUNK = 300;
+
 function isAllowedCategory(category: string): boolean {
   const lower = category.toLowerCase();
   return ALLOWED_CATEGORIES.some(c => lower.includes(c));
@@ -36,31 +40,39 @@ export async function runServiceSync(): Promise<void> {
 
     const providerIds = new Set(filtered.map(s => String(s.service)));
 
+    // OPTIMASI: ambil SEMUA service existing dalam SATU query (bukan findUnique per item).
+    // Sebelumnya loop 2600+ layanan masing-masing melakukan findUnique + upsert secara
+    // berurutan (~70 detik). Sekarang baca sekali ke Map, proses di memori, lalu tulis
+    // dalam batch transaksi.
+    const existingList = await prisma.service.findMany({ where: { provider_name: 'IndoSMM' } });
+    const existingMap  = new Map(existingList.map(e => [e.provider_service_id, e]));
+
+    // Kumpulkan operasi tulis (lazy PrismaPromise; belum dieksekusi sampai masuk $transaction).
+    const writeOps: any[] = [];
+    let changedCount = 0;
+    const now = new Date();
+
     for (const s of filtered) {
-      const buyPrice   = parseFloat(s.rate);
-      const refill     = parseRefillSupport(s.name) || s.refill;
-      const refillDays = parseRefillDays(s.name);
-      const min        = parseInt(s.min);
-      const max        = parseInt(s.max);
+      const providerServiceId = String(s.service);
+      const buyPrice    = parseFloat(s.rate);
+      const refill      = parseRefillSupport(s.name) || s.refill;
+      const refillDays  = parseRefillDays(s.name);
+      const min         = parseInt(s.min);
+      const max         = parseInt(s.max);
       // Deskripsi dari provider bisa datang lewat "description" atau "desc".
       const providerDesc = (s.description ?? s.desc ?? '').trim() || null;
 
-      const existing = await prisma.service.findUnique({
-        where: { provider_service_id: String(s.service) },
-      });
+      const existing = existingMap.get(providerServiceId);
 
-      // PENTING: pertahankan markup kustom per-layanan saat update. Sebelumnya price_sell
-      // dihitung ulang dengan markup DEFAULT tiap sync, sehingga markup yang di-set admin
-      // lewat /admin set-markup ter-reset setiap 30 menit. Sekarang:
-      //   - UPDATE  → pakai markup_value milik service yang sudah tersimpan
-      //   - CREATE  → pakai markup default dari ENV
+      // PENTING: pertahankan markup kustom per-layanan saat update (jangan reset ke default).
+      //   - UPDATE → pakai markup_value milik service yang sudah tersimpan
+      //   - CREATE → pakai markup default dari ENV
       const createMarkup = ENV.MARKUP_PERCENTAGE;
       const updateMarkup = existing?.markup_value ?? ENV.MARKUP_PERCENTAGE;
       const sellPriceUpdate = calculateSellPrice(buyPrice, updateMarkup);
       const sellPriceCreate = calculateSellPrice(buyPrice, createMarkup);
 
-      // Deteksi perubahan pada data provider agar snapshot hanya ditulis saat ada perubahan
-      // (menghindari ribuan baris snapshot identik tiap sync).
+      // Snapshot hanya ditulis saat data provider berubah (hindari ribuan baris identik).
       const changed =
         !existing ||
         existing.name        !== s.name ||
@@ -73,27 +85,26 @@ export async function runServiceSync(): Promise<void> {
         existing.refill_days !== refillDays ||
         !existing.active;
 
-      await prisma.service.upsert({
-        where:  { provider_service_id: String(s.service) },
+      writeOps.push(prisma.service.upsert({
+        where:  { provider_service_id: providerServiceId },
         update: {
           name:           s.name,
           category:       s.category,
           description:    providerDesc,
-          // description_override TIDAK diubah agar deskripsi manual admin tetap terjaga.
+          // description_override & markup_value TIDAK diubah (jaga setelan manual admin).
           min,
           max,
           price_buy:      buyPrice,
-          // markup_value TIDAK diubah agar markup kustom admin tetap terjaga.
           price_sell:     sellPriceUpdate,
-          refill:         refill,
+          refill,
           refill_days:    refillDays,
           active:         true,
-          last_synced_at: new Date(),
-          updated_at:     new Date(),
+          last_synced_at: now,
+          updated_at:     now,
         },
         create: {
           provider_name:       'IndoSMM',
-          provider_service_id: String(s.service),
+          provider_service_id: providerServiceId,
           category:            s.category,
           name:                s.name,
           description:         providerDesc,
@@ -103,42 +114,50 @@ export async function runServiceSync(): Promise<void> {
           price_sell:          sellPriceCreate,
           markup_type:         'percentage',
           markup_value:        createMarkup,
-          refill:              refill,
+          refill,
           refill_days:         refillDays,
           active:              true,
-          last_synced_at:      new Date(),
+          last_synced_at:      now,
         },
-      });
+      }));
 
       if (changed) {
-        await prisma.serviceSnapshot.create({
+        changedCount++;
+        writeOps.push(prisma.serviceSnapshot.create({
           data: {
-            service_id: String(s.service),
+            service_id: providerServiceId,
             raw_json:   JSON.stringify(s),
             fetched_at: startedAt,
           },
-        });
+        }));
       }
     }
 
+    // Eksekusi semua tulisan dalam batch transaksi.
+    for (let i = 0; i < writeOps.length; i += WRITE_CHUNK) {
+      await prisma.$transaction(writeOps.slice(i, i + WRITE_CHUNK));
+    }
+
+    // Nonaktifkan layanan yang tidak lagi ada di provider.
     await prisma.service.updateMany({
       where: {
         provider_name:       'IndoSMM',
         provider_service_id: { notIn: Array.from(providerIds) },
         active:              true,
       },
-      data: { active: false, updated_at: new Date() },
+      data: { active: false, updated_at: now },
     });
 
     await prisma.providerSyncLog.create({
       data: {
         provider_name: 'IndoSMM',
         status:        'success',
-        message:       `Synced ${filtered.length} services`,
+        message:       `Synced ${filtered.length} services (${changedCount} changed)`,
       },
     });
 
-    logger.info('[ServiceSync] Sync completed successfully');
+    const elapsed = ((Date.now() - startedAt.getTime()) / 1000).toFixed(1);
+    logger.info(`[ServiceSync] Sync completed in ${elapsed}s — ${filtered.length} services, ${changedCount} snapshot(s)`);
   } catch (error: any) {
     logger.error('[ServiceSync] Sync failed', { error: error.message });
     await prisma.providerSyncLog.create({
