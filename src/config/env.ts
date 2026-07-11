@@ -26,6 +26,8 @@ export const ENV = {
   QRIS_STATIC_PAYLOAD:  optional('QRIS_STATIC_PAYLOAD', ''),
   MARKUP_PERCENTAGE:    parseFloat(optional('MARKUP_PERCENTAGE', '40')),
   LOW_BALANCE_THRESHOLD: parseFloat(optional('LOW_BALANCE_THRESHOLD', '50000')),
+  // Selang cek & notif saldo IndoSMM (jam). Default 6 jam biar tidak spam tiap jam.
+  BALANCE_CHECK_INTERVAL_HOURS: parseFloat(optional('BALANCE_CHECK_INTERVAL_HOURS', '6')),
   DATABASE_URL:         optional('DATABASE_URL', 'file:./dev.db'),
   TZ:                   optional('TZ', 'Asia/Jakarta'),
   // URL health-check untuk monitoring uptime (opsional). Bila diisi, bot mem-ping tiap 5 menit;

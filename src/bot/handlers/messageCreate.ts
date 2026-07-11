@@ -62,7 +62,12 @@ export async function handleMessageCreate(message: Message): Promise<void> {
           total:       payment.amount,
           proofUrl:    image.url,
         });
-        await adminChannel.send({ embeds: [embed], components: [row] });
+        await adminChannel.send({
+          content:         `<@&${ENV.ADMIN_ROLE_ID}> bukti pembayaran masuk — perlu konfirmasi!`,
+          embeds:          [embed],
+          components:      [row],
+          allowedMentions: { roles: [ENV.ADMIN_ROLE_ID] },
+        });
       }
     }
 

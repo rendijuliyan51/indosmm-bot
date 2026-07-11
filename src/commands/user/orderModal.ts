@@ -242,7 +242,11 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
           total:       total,
           channelId:   ticketChannel.id,
         });
-        await adminChannel.send({ embeds: [embed] });
+        await adminChannel.send({
+          content:         `<@&${ENV.ADMIN_ROLE_ID}> pesanan baru masuk!`,
+          embeds:          [embed],
+          allowedMentions: { roles: [ENV.ADMIN_ROLE_ID] },
+        });
       }
     } catch (e) {
       logger.error('[OrderModal] Failed to notify admin', { error: (e as any).message });

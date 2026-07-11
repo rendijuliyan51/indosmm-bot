@@ -346,7 +346,7 @@ async function main(): Promise<void> {
 
     setInterval(async () => {
       try { await checkBalance(); } catch (e: any) { logger.error('[Worker] Balance failed', { error: e.message }); }
-    }, 60 * 60 * 1000);
+    }, Math.max(1, ENV.BALANCE_CHECK_INTERVAL_HOURS) * 60 * 60 * 1000);
 
     // Health-check ping tiap 5 menit (hanya bila HEALTHCHECK_URL diisi).
     setInterval(() => pingHealthcheck(), 5 * 60 * 1000);
