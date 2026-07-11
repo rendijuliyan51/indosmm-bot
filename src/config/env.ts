@@ -19,7 +19,11 @@ export const ENV = {
   TICKET_CATEGORY_ID:   optional('TICKET_CATEGORY_ID', ''),
   INDOSMM_API_URL:      required('INDOSMM_API_URL'),
   INDOSMM_API_KEY:      required('INDOSMM_API_KEY'),
-  QRIS_IMAGE_URL:       required('QRIS_IMAGE_URL'),
+  QRIS_IMAGE_URL:       optional('QRIS_IMAGE_URL', ''),
+  // Payload QRIS STATIS kamu (string EMVCo yang di-encode di dalam gambar QRIS, diawali
+  // "00020101..."). Kalau diisi, bot akan membuat QRIS DINAMIS otomatis dengan nominal
+  // sesuai tagihan tiap order. Cara ambil: decode gambar QRIS kamu pakai QR reader.
+  QRIS_STATIC_PAYLOAD:  optional('QRIS_STATIC_PAYLOAD', ''),
   MARKUP_PERCENTAGE:    parseFloat(optional('MARKUP_PERCENTAGE', '40')),
   LOW_BALANCE_THRESHOLD: parseFloat(optional('LOW_BALANCE_THRESHOLD', '50000')),
   DATABASE_URL:         optional('DATABASE_URL', 'file:./dev.db'),
