@@ -10,7 +10,6 @@ import { runCatalogUpdate } from './workers/catalogWorker';
 import { runTicketGarbageCollector, runTicketChannelSweeper, handleMemberLeave } from './workers/ticketGarbageWorker';
 import { runDatabaseBackup, scheduleBackup } from './workers/backupWorker';
 import { REST, Routes, SlashCommandBuilder, SlashCommandSubcommandBuilder, GuildMember, TextChannel } from 'discord.js';
-import { execFileSync } from 'child_process';
 import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import path from 'path';
 import { indosmm } from './providers/indosmm';
@@ -129,44 +128,55 @@ function backupDatabaseBeforeMigration(): void {
   }
 }
 
-// Cari file CLI Prisma agar bisa dijalankan lewat `node <cli.js>`. Ini menghindari error
-// "prisma: Permission denied" di sebagian host (mis. EnderCloud) yang skrip di node_modules/.bin
-// -nya kehilangan bit executable. Menjalankan lewat `node` tidak butuh bit executable.
-function resolvePrismaCli(): string | null {
-  const candidates = [
-    path.join(process.cwd(), 'node_modules', 'prisma', 'build', 'index.js'),
-    path.join(__dirname, '..', 'node_modules', 'prisma', 'build', 'index.js'),
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
-  }
-  return null;
-}
+// DDL idempoten untuk menyiapkan skema. Kita SENGAJA memakai CREATE TABLE IF NOT EXISTS +
+// ALTER ADD COLUMN (bukan `prisma db push`) karena `db push` pada SQLite bisa GAGAL dengan
+// error "index ... cannot be dropped" saat mereconcile skema lama. Pendekatan ini TIDAK PERNAH
+// men-drop apa pun, jadi aman untuk DB baru maupun DB lama yang sudah berisi data tiket/order.
+const CREATE_TABLE_STATEMENTS: string[] = [
+  `CREATE TABLE IF NOT EXISTS "Service" ("id" TEXT NOT NULL PRIMARY KEY, "provider_name" TEXT NOT NULL, "provider_service_id" TEXT NOT NULL UNIQUE, "category" TEXT NOT NULL, "name" TEXT NOT NULL, "description" TEXT, "description_override" TEXT, "min" INTEGER NOT NULL, "max" INTEGER NOT NULL DEFAULT 0, "price_buy" REAL NOT NULL DEFAULT 0, "price_sell" REAL NOT NULL DEFAULT 0, "markup_type" TEXT NOT NULL DEFAULT 'percentage', "markup_value" REAL NOT NULL DEFAULT 40, "refill" INTEGER NOT NULL DEFAULT 0, "refill_days" INTEGER NOT NULL DEFAULT 0, "active" INTEGER NOT NULL DEFAULT 1, "last_synced_at" DATETIME, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "ServiceSnapshot" ("id" TEXT NOT NULL PRIMARY KEY, "service_id" TEXT NOT NULL, "raw_json" TEXT NOT NULL, "fetched_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "CatalogMessage" ("id" TEXT NOT NULL PRIMARY KEY, "guild_id" TEXT NOT NULL, "channel_id" TEXT NOT NULL, "message_id" TEXT, "message_type" TEXT NOT NULL DEFAULT 'catalog', "last_hash" TEXT, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "Ticket" ("id" TEXT NOT NULL PRIMARY KEY, "discord_user_id" TEXT NOT NULL, "guild_id" TEXT NOT NULL, "ticket_channel_id" TEXT NOT NULL UNIQUE, "status" TEXT NOT NULL DEFAULT 'open', "subject" TEXT NOT NULL, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "closed_at" DATETIME, "archived_at" DATETIME, "closed_by" TEXT, "close_reason" TEXT, "delete_channel_at" DATETIME)`,
+  `CREATE TABLE IF NOT EXISTS "Order" ("id" TEXT NOT NULL PRIMARY KEY, "ticket_id" TEXT NOT NULL, "user_id" TEXT NOT NULL, "service_id" TEXT NOT NULL, "provider_order_id" TEXT, "target_link" TEXT NOT NULL, "quantity" INTEGER NOT NULL, "buy_price" REAL NOT NULL, "sell_price" REAL NOT NULL, "profit" REAL NOT NULL, "status" TEXT NOT NULL DEFAULT 'waiting_payment', "start_count" INTEGER, "remains" INTEGER, "refill_status" TEXT, "refill_expires_at" DATETIME, "notes" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "OrderLog" ("id" TEXT NOT NULL PRIMARY KEY, "order_id" TEXT NOT NULL, "old_status" TEXT, "new_status" TEXT NOT NULL, "message" TEXT, "raw_response_json" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "ManualPayment" ("id" TEXT NOT NULL PRIMARY KEY, "user_id" TEXT NOT NULL, "ticket_id" TEXT NOT NULL, "amount" REAL NOT NULL, "method" TEXT NOT NULL DEFAULT 'qris', "proof_url" TEXT, "status" TEXT NOT NULL DEFAULT 'pending', "approved_by" TEXT, "approved_at" DATETIME, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "BotMessage" ("id" TEXT NOT NULL PRIMARY KEY, "ticket_id" TEXT NOT NULL, "message_type" TEXT NOT NULL, "channel_id" TEXT NOT NULL, "message_id" TEXT NOT NULL, "last_hash" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "ProviderSyncLog" ("id" TEXT NOT NULL PRIMARY KEY, "provider_name" TEXT NOT NULL, "status" TEXT NOT NULL, "message" TEXT, "raw_response_json" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "AdminAuditLog" ("id" TEXT NOT NULL PRIMARY KEY, "actor_user_id" TEXT NOT NULL, "action" TEXT NOT NULL, "target_type" TEXT, "target_id" TEXT, "details_json" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "RefillRequest" ("id" TEXT NOT NULL PRIMARY KEY, "order_id" TEXT NOT NULL, "ticket_id" TEXT NOT NULL, "provider_refill_id" TEXT, "status" TEXT NOT NULL DEFAULT 'pending', "requested_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "completed_at" DATETIME, "notes" TEXT)`,
+  `CREATE TABLE IF NOT EXISTS "CatalogSelection" ("discord_user_id" TEXT NOT NULL PRIMARY KEY, "category" TEXT, "service_type" TEXT, "service_id" TEXT, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+];
+
+// Kolom baru untuk DB LAMA yang tabelnya sudah ada. ALTER gagal "duplicate column name"
+// bila kolom sudah ada — itu diabaikan (idempoten).
+const ADD_COLUMN_STATEMENTS: string[] = [
+  `ALTER TABLE "Service" ADD COLUMN "description_override" TEXT`,
+  `ALTER TABLE "Ticket" ADD COLUMN "delete_channel_at" DATETIME`,
+];
 
 async function initDatabase(): Promise<void> {
-  // Sinkronkan skema database dari prisma/schema.prisma (satu-satunya sumber kebenaran).
-  // Menggantikan CREATE TABLE manual yang rawan drift terhadap schema.prisma.
-  // Pastikan DATABASE_URL tersedia untuk Prisma CLI.
   process.env.DATABASE_URL = process.env.DATABASE_URL || ENV.DATABASE_URL;
 
-  // 1) Amankan data dulu (salin DB sebelum menyentuh skema).
+  // Amankan data dulu (salin DB sebelum menyentuh skema) — best-effort.
   backupDatabaseBeforeMigration();
 
-  // 2) Terapkan skema. --accept-data-loss WAJIB agar migrasi non-interaktif di server tidak
-  //    GAGAL saat ada perubahan destruktif yang memang disengaja (mis. menghapus tabel usang
-  //    'User' yang tidak terpakai). Perubahan pada tabel aktif (Ticket/Order/dll) bersifat
-  //    ADITIF (hanya menambah kolom/tabel), sehingga data tiket & order TETAP AMAN.
-  const args = ['db', 'push', '--skip-generate', '--accept-data-loss'];
-  const prismaCli = resolvePrismaCli();
-  if (prismaCli) {
-    // Jalankan via node (aman dari masalah permission pada .bin).
-    execFileSync(process.execPath, [prismaCli, ...args], { stdio: 'inherit', env: process.env });
-  } else {
-    // Fallback: pakai npx bila CLI tidak ketemu.
-    execFileSync('npx', ['prisma', ...args], { stdio: 'inherit', env: process.env });
+  // Buat tabel yang belum ada (aman untuk DB baru & lama; tidak pernah men-drop).
+  for (const sql of CREATE_TABLE_STATEMENTS) {
+    await prisma.$executeRawUnsafe(sql);
   }
 
-  logger.info('[DB] Schema synced via prisma db push');
+  // Tambahkan kolom baru ke tabel lama; abaikan bila kolom sudah ada.
+  for (const sql of ADD_COLUMN_STATEMENTS) {
+    try {
+      await prisma.$executeRawUnsafe(sql);
+    } catch (e: any) {
+      if (!/duplicate column name/i.test(e?.message || '')) {
+        logger.warn('[DB] ALTER dilewati', { error: e?.message });
+      }
+    }
+  }
+
+  logger.info('[DB] Schema siap (idempotent, tanpa drop).');
 }
 
 async function main(): Promise<void> {
