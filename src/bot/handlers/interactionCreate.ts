@@ -83,7 +83,13 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
     }
 
   } catch (err: any) {
-    logger.error('[Interaction] Unhandled error', { error: err.message });
+    // Log detail supaya kalau "interaction failed" muncul, penyebab pastinya terlihat di log.
+    const kind = (interaction as any).commandName
+      ? `command:${(interaction as any).commandName}`
+      : (interaction as any).customId
+        ? `component:${(interaction as any).customId}`
+        : (interaction as any).type;
+    logger.error('[Interaction] Unhandled error', { kind, error: err?.message, stack: err?.stack });
     try {
       const reply = { content: '❌ Terjadi kesalahan, coba lagi.', ephemeral: true };
       if ('replied' in interaction && (interaction as any).replied) return;
