@@ -17,6 +17,9 @@ const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// Utamakan IPv4 saat resolusi DNS (banyak host punya IPv6 rusak yang bikin koneksi menggantung).
+try { require('dns').setDefaultResultOrder('ipv4first'); } catch { /* Node lama: abaikan */ }
+
 // Prisma CLI butuh DATABASE_URL saat generate. Beri default sqlite bila belum diset di panel.
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'file:./dev.db';
 

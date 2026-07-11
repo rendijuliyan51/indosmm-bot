@@ -15,6 +15,36 @@ import path from 'path';
 import { indosmm } from './providers/indosmm';
 import { buildLowBalanceNotif } from './lib/embeds';
 import { handleMessageCreate } from './bot/handlers/messageCreate';
+import dns from 'dns';
+import https from 'https';
+
+// PENTING: paksa DNS mengutamakan IPv4. Di banyak host (container/VPS, termasuk sebagian
+// EnderCloud) konektivitas IPv6 rusak/tidak terhubung. Karena undici (dipakai discord.js untuk
+// REST) sering mencoba IPv6 lebih dulu, panggilan login ke API Discord bisa "menggantung" tanpa
+// error sama sekali — persis gejala bot stuck di "Logging in to Discord...". ipv4first mencegahnya.
+try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node lama: abaikan */ }
+
+// Cek konektivitas ke API Discord memakai modul https bawaan Node (tanpa token, endpoint publik).
+// Ini memisahkan masalah "jaringan host tidak bisa menghubungi Discord" dari masalah lain,
+// sehingga log jelas menunjukkan penyebab bila bot gagal login.
+function probeDiscordApi(): Promise<void> {
+  return new Promise((resolve) => {
+    const req = https.get('https://discord.com/api/v10/gateway', { timeout: 10_000 }, (res) => {
+      logger.info(`[Net] API Discord terjangkau (HTTP ${res.statusCode}).`);
+      res.resume();
+      resolve();
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      logger.error('[Net] TIMEOUT menghubungi API Discord (10 dtk). Kemungkinan jaringan host / IPv6 bermasalah, atau firewall memblokir discord.com.');
+      resolve();
+    });
+    req.on('error', (e: any) => {
+      logger.error('[Net] Gagal menghubungi API Discord', { error: e?.message });
+      resolve();
+    });
+  });
+}
 
 async function checkBalance(): Promise<void> {
   try {
@@ -255,21 +285,28 @@ async function main(): Promise<void> {
   client.on('shardError',     (e: any) => logger.error('[Discord] Shard error', { error: e?.message }));
   client.on('shardDisconnect', (ev: any, id: number) => logger.warn(`[Discord] Shard ${id} disconnected`, { code: ev?.code, reason: ev?.reason }));
   client.on('warn',           (m: string) => logger.warn('[Discord] Warn', { message: m }));
+  // Log tahap koneksi gateway secara detail. Aktifkan dengan env DISCORD_DEBUG=1 untuk melihat
+  // persis di mana proses berhenti (fetch gateway / connecting wss / identify / ready).
+  if (process.env.DISCORD_DEBUG) {
+    client.on('debug', (m: string) => logger.info('[Discord][debug]', { m }));
+  }
 
-  // Watchdog: kalau event "ready" tak muncul dalam 30 detik, kemungkinan besar Privileged
-  // Intents belum diaktifkan di Discord Developer Portal.
+  // Watchdog: kalau event "ready" tak muncul dalam 30 detik, tampilkan kemungkinan penyebab.
   const readyWatchdog = setTimeout(() => {
     logger.warn(
-      '[Boot] Bot login tapi belum "ready" setelah 30 detik. ' +
-      'Penyebab paling umum: PRIVILEGED INTENTS belum diaktifkan. ' +
-      'Buka Discord Developer Portal → aplikasi bot → tab Bot → aktifkan ' +
-      '"SERVER MEMBERS INTENT" dan "MESSAGE CONTENT INTENT", lalu restart bot. ' +
-      'Bisa juga karena token salah atau bot belum diundang ke server.'
+      '[Boot] Bot login tapi belum "ready" setelah 30 detik. Kemungkinan penyebab: ' +
+      '(1) Jaringan host tidak stabil / IPv6 bermasalah (lihat baris [Net] di atas), ' +
+      '(2) memakai Node.js versi non-LTS (mis. v25) yang belum kompatibel dengan discord.js v14 — pakai Node 20/22, ' +
+      '(3) Privileged Intents belum aktif, atau (4) token/invite bermasalah. ' +
+      'Set env DISCORD_DEBUG=1 lalu restart untuk log detail tahap koneksi.'
     );
   }, 30_000);
   client.once('ready', () => clearTimeout(readyWatchdog));
 
   try {
+    // Cek konektivitas dulu supaya masalah jaringan langsung kelihatan di log.
+    await probeDiscordApi();
+
     logger.info('[Boot] Logging in to Discord...');
     await client.login(ENV.DISCORD_TOKEN);
     logger.info('[Boot] Login OK, menunggu event ready dari gateway...');
