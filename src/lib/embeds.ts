@@ -184,10 +184,12 @@ export function buildServiceDetailButtons(): ActionRowBuilder<ButtonBuilder> {
   );
 }
 
-export function buildCatalogEmbed(categories: string[]): EmbedBuilder {
+export function buildCatalogEmbed(categories: string[], serviceCount?: number): EmbedBuilder {
   const platformList = categories
     .map(c => `${getCategoryEmoji(c)} **${c}**`)
     .join('\n');
+
+  const stat = `📦 **${serviceCount ?? '—'}** layanan  •  🗂️ **${categories.length}** platform`;
 
   return new EmbedBuilder()
     .setColor(GOLD)
@@ -196,8 +198,9 @@ export function buildCatalogEmbed(categories: string[]): EmbedBuilder {
       'Tingkatkan eksistensi sosial media kamu\n' +
       'bersama layanan terpercaya kami.\n\n' +
       '**Proses cepat • Harga terjangkau • Bergaransi**\n\n' +
-      'Pilih platform untuk melihat layanan\n' +
-      'yang tersedia beserta harga terbaik kami.\n\n' +
+      `${stat}\n\n` +
+      'Pilih platform di bawah, atau klik **🔍 Cari Layanan**\n' +
+      'untuk mencari langsung dengan kata kunci.\n\n' +
       platformList
     )
     .setFooter(footer())
@@ -633,6 +636,33 @@ export function buildTestimonialEmbed(data: {
       (data.comment ? `> ${data.comment}\n\n` : '') +
       `${emoji} **${data.serviceName}**\n` +
       `Dari : <@${data.userId}>`
+    )
+    .setFooter(footer())
+    .setTimestamp();
+}
+
+// Embed hasil pencarian layanan untuk admin (menampilkan Service ID untuk disalin).
+export function buildAdminServiceSearchEmbed(keyword: string, total: number, items: {
+  providerServiceId: string; name: string; category: string;
+  priceSell: number; min: number; max: number; hidden: boolean; refill: boolean;
+}[]): EmbedBuilder {
+  const lines = items.map(s => {
+    const flags = `${s.hidden ? ' 🚫disembunyikan' : ''}${s.refill ? ' ♻️refill' : ''}`;
+    return `\`${s.providerServiceId}\` — ${getCategoryEmoji(s.category)} **${s.name}**\n` +
+           `   ${formatRupiah(s.priceSell)}/1000 • Min ${s.min.toLocaleString('id-ID')} • Max ${s.max.toLocaleString('id-ID')}${flags}`;
+  });
+
+  const note = total > items.length
+    ? `\n\n_Menampilkan ${items.length} dari ${total} hasil — persempit kata kunci._`
+    : '';
+
+  return new EmbedBuilder()
+    .setColor(GOLD)
+    .setTitle(`🔎 Hasil Pencarian: "${keyword}"`)
+    .setDescription(
+      (items.length === 0
+        ? 'Tidak ada layanan yang cocok.'
+        : `Angka di depan (\`kode\`) = **Service ID** untuk \`/admin set-description\` & \`/admin hide-service\`.\n\n${truncateField(lines.join('\n'), 3900)}`) + note,
     )
     .setFooter(footer())
     .setTimestamp();
