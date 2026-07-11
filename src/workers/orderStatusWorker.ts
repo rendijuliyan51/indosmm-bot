@@ -128,6 +128,8 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
           refillExpiresAt: updated.refill_expires_at,
           providerOrderId: order.provider_order_id,
           createdAt:       order.created_at,
+          serviceId:       service.provider_service_id,
+          ticketId:        order.ticket_id,
         });
 
         const row = buildOrderActionRow({

@@ -124,6 +124,7 @@ const GENERAL_RULES = [
 
 export function buildServiceDetailEmbed(service: {
   id: string; name: string; category: string;
+  provider_service_id?: string;
   description?: string | null; description_override?: string | null;
   min: number; max: number;
   price_sell: number; refill: boolean; refill_days: number;
@@ -150,10 +151,11 @@ export function buildServiceDetailEmbed(service: {
       },
       {
         name:  '📦 Ketentuan Order',
-        value: `Min      : **${service.min.toLocaleString('id-ID')}**\n` +
-               `Max      : **${service.max.toLocaleString('id-ID')}**\n` +
-               `Harga    : **${formatRupiah(service.price_sell)}/1000**\n` +
-               `Refill   : **${service.refill && service.refill_days > 0 ? `${service.refill_days} hari` : 'Tidak tersedia'}**`,
+        value: (service.provider_service_id ? `Service ID : \`${service.provider_service_id}\`\n` : '') +
+               `Min        : **${service.min.toLocaleString('id-ID')}**\n` +
+               `Max        : **${service.max.toLocaleString('id-ID')}**\n` +
+               `Harga      : **${formatRupiah(service.price_sell)}/1000**\n` +
+               `Refill     : **${service.refill && service.refill_days > 0 ? `${service.refill_days} hari` : 'Tidak tersedia'}**`,
         inline: false,
       },
       {
@@ -245,7 +247,7 @@ export function buildServiceTypeSelectMenu(types: string[]): ActionRowBuilder<St
 
 export const SERVICE_PAGE_SIZE = 25;
 
-type ServiceOption = { id: string; name: string; price_sell: number; min: number; max: number };
+type ServiceOption = { id: string; name: string; price_sell: number; min: number; max: number; provider_service_id?: string };
 
 /**
  * Membangun dropdown layanan dengan pagination. Discord membatasi 25 opsi per select menu,
@@ -267,7 +269,7 @@ export function buildServiceSelectRows(
     .addOptions(slice.map(s => ({
       label:       truncateForDropdown(s.name),
       value:       s.id,
-      description: `${formatRupiah(s.price_sell)}/1000 • Min: ${s.min.toLocaleString('id-ID')} • Max: ${s.max.toLocaleString('id-ID')}`,
+      description: `${s.provider_service_id ? `ID ${s.provider_service_id} • ` : ''}${formatRupiah(s.price_sell)}/1000 • Min ${s.min.toLocaleString('id-ID')} • Max ${s.max.toLocaleString('id-ID')}`.slice(0, 100),
     })));
 
   const rows: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [
@@ -296,7 +298,7 @@ export function buildServiceSelectRows(
 export function buildInvoiceEmbed(data: {
   orderId: string; username: string; serviceName: string;
   category: string; targetLink: string; quantity: number;
-  total: number; qrisUrl: string;
+  total: number; qrisUrl: string; serviceId?: string;
 }): EmbedBuilder {
   const emoji = getCategoryEmoji(data.category);
   const embed = new EmbedBuilder()
@@ -305,6 +307,7 @@ export function buildInvoiceEmbed(data: {
     .setDescription(
       `Hei <@${data.username}>! Berikut detail pesanan kamu\n\n` +
       `Layanan  → ${emoji} ${data.serviceName}\n` +
+      (data.serviceId ? `Service ID → \`${data.serviceId}\`\n` : '') +
       `Target   → ${data.targetLink}\n` +
       `Jumlah   → ${data.quantity.toLocaleString('id-ID')}\n` +
       `Total    → **${formatRupiah(data.total)}**\n\n` +
@@ -368,6 +371,7 @@ export function buildOrderProgressEmbed(data: {
   startCount?: number | null; remains?: number | null;
   progressBar?: string | null; refillExpiresAt?: Date | null;
   providerOrderId?: string | null; createdAt?: Date | null;
+  serviceId?: string | null; ticketId?: string | null;
 }): EmbedBuilder {
   const normalizedStatus = data.status.toLowerCase().trim();
   const cfg   = STATUS_CONFIG[normalizedStatus] ?? { color: DARK, emoji: '🔷', label: data.status };
@@ -408,8 +412,12 @@ export function buildOrderProgressEmbed(data: {
     }
   }
 
+  desc += `\n`;
+  if (data.serviceId) {
+    desc += `\nService ID  : \`${data.serviceId}\``;
+  }
   if (data.providerOrderId) {
-    desc += `\n\nProvider ID : \`${data.providerOrderId}\``;
+    desc += `\nProvider ID : \`${data.providerOrderId}\``;
   }
 
   if (data.refillExpiresAt) {
@@ -417,6 +425,9 @@ export function buildOrderProgressEmbed(data: {
   }
 
   desc += `\n\n\`Order ID: ${data.orderId.slice(0, 8)}\``;
+  if (data.ticketId) {
+    desc += ` • \`Ticket ID: ${data.ticketId.slice(0, 8)}\``;
+  }
 
   return new EmbedBuilder()
     .setColor(cfg.color)

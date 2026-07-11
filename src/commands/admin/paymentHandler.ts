@@ -146,6 +146,8 @@ export async function handlePaymentApprove(interaction: ButtonInteraction): Prom
       status:          'submitted',
       providerOrderId: providerOrderId,
       refillExpiresAt: updatedOrder.refill_expires_at,
+      serviceId:       service.provider_service_id,
+      ticketId:        ticketId,
     });
 
     if (ticketChannel) {

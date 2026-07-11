@@ -211,6 +211,7 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
       quantity:    quantity,
       total:       total,
       qrisUrl:     qrisImageRef,
+      serviceId:   service.provider_service_id,
     });
 
     const invoiceMsg = await ticketChannel.send({
