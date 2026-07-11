@@ -299,7 +299,7 @@ export function buildInvoiceEmbed(data: {
   total: number; qrisUrl: string;
 }): EmbedBuilder {
   const emoji = getCategoryEmoji(data.category);
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle('Invoice Pesanan')
     .setDescription(
@@ -308,12 +308,14 @@ export function buildInvoiceEmbed(data: {
       `Target   → ${data.targetLink}\n` +
       `Jumlah   → ${data.quantity.toLocaleString('id-ID')}\n` +
       `Total    → **${formatRupiah(data.total)}**\n\n` +
-      `Bayar via QRIS di bawah, lalu\nupload bukti transfer di sini ya!\n\n` +
+      `Scan QRIS di bawah (nominal sudah otomatis sesuai tagihan),\nlalu upload bukti transfer di sini ya!\n\n` +
       `\`Order ID: ${data.orderId.slice(0, 8)}\``
     )
-    .setImage(data.qrisUrl)
     .setFooter(footer())
     .setTimestamp();
+
+  if (data.qrisUrl) embed.setImage(data.qrisUrl);
+  return embed;
 }
 
 export function buildPaymentActionRow(ticketId: string): ActionRowBuilder<ButtonBuilder> {

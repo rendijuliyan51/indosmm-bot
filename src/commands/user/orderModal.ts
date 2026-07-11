@@ -1,9 +1,10 @@
-import { ModalSubmitInteraction, ChannelType, PermissionFlagsBits } from 'discord.js';
+import { ModalSubmitInteraction, ChannelType, PermissionFlagsBits, AttachmentBuilder } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { ENV } from '../../config/env';
 import { logger } from '../../lib/logger';
 import { calculateTotal } from '../../lib/pricing';
 import { buildInvoiceEmbed, buildAdminNewOrderNotif } from '../../lib/embeds';
+import { buildDynamicQrisPayload, buildQrisPngBuffer } from '../../lib/qris';
 import { clearSelection } from '../../lib/selectionStore';
 
 /**
@@ -186,6 +187,21 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
       },
     });
 
+    // QRIS: kalau QRIS_STATIC_PAYLOAD diisi → buat QRIS DINAMIS (nominal auto sesuai tagihan).
+    // Kalau tidak → pakai gambar QRIS statis (QRIS_IMAGE_URL) seperti sebelumnya.
+    const invoiceFiles: AttachmentBuilder[] = [];
+    let qrisImageRef = ENV.QRIS_IMAGE_URL;
+    if (ENV.QRIS_STATIC_PAYLOAD) {
+      try {
+        const payload = buildDynamicQrisPayload(ENV.QRIS_STATIC_PAYLOAD, total);
+        const png     = await buildQrisPngBuffer(payload);
+        invoiceFiles.push(new AttachmentBuilder(png, { name: 'qris.png' }));
+        qrisImageRef = 'attachment://qris.png';
+      } catch (e: any) {
+        logger.error('[OrderModal] Gagal membuat QRIS dinamis, fallback ke gambar statis', { error: e.message });
+      }
+    }
+
     const invoiceEmbed = buildInvoiceEmbed({
       orderId:     order.id,
       username:    interaction.user.id,
@@ -194,12 +210,13 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
       targetLink:  targetLink,
       quantity:    quantity,
       total:       total,
-      qrisUrl:     ENV.QRIS_IMAGE_URL,
+      qrisUrl:     qrisImageRef,
     });
 
     const invoiceMsg = await ticketChannel.send({
       content: `<@${interaction.user.id}>`,
       embeds:  [invoiceEmbed],
+      files:   invoiceFiles,
     });
 
     await prisma.botMessage.create({
