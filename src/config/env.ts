@@ -31,6 +31,9 @@ export const ENV = {
   // URL health-check untuk monitoring uptime (opsional). Bila diisi, bot mem-ping tiap 5 menit;
   // kalau bot mati, ping berhenti dan layanan monitor akan memberi tahu kamu.
   HEALTHCHECK_URL:      optional('HEALTHCHECK_URL', ''),
+  // Channel untuk auto-post testimoni pembeli (opsional). Hanya rating bintang 4 & 5 yang
+  // diposting. Kosongkan untuk menonaktifkan (review tetap tersimpan & dihitung di /admin stats).
+  TESTIMONIAL_CHANNEL_ID: optional('TESTIMONIAL_CHANNEL_ID', ''),
 
   EMOJI: {
     // Platform

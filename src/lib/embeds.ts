@@ -605,6 +605,28 @@ export function buildReviewThanksEmbed(rating: number, comment?: string | null):
     .setTimestamp();
 }
 
+// Embed testimoni publik (diposting ke channel testimoni untuk rating 4-5 bintang).
+export function buildTestimonialEmbed(data: {
+  userId: string; username: string; avatarUrl?: string | null;
+  rating: number; comment?: string | null;
+  serviceName: string; category: string;
+}): EmbedBuilder {
+  const emoji = getCategoryEmoji(data.category);
+  const stars = '⭐'.repeat(Math.max(1, Math.min(5, data.rating)));
+  return new EmbedBuilder()
+    .setColor(GOLD)
+    .setAuthor({ name: data.username, iconURL: data.avatarUrl || undefined })
+    .setTitle('Testimoni Pembeli')
+    .setDescription(
+      `${stars} **${data.rating}/5**\n\n` +
+      (data.comment ? `> ${data.comment}\n\n` : '') +
+      `${emoji} **${data.serviceName}**\n` +
+      `Dari : <@${data.userId}>`
+    )
+    .setFooter(footer())
+    .setTimestamp();
+}
+
 // Embed riwayat order milik user.
 export function buildOrderHistoryEmbed(userId: string, orders: {
   id: string; serviceName: string; status: string; quantity: number;
