@@ -1,10 +1,11 @@
 import {
   ButtonInteraction, ModalSubmitInteraction, ModalBuilder,
-  TextInputBuilder, TextInputStyle, ActionRowBuilder, MessageFlags,
+  TextInputBuilder, TextInputStyle, ActionRowBuilder, MessageFlags, TextChannel,
 } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { logger } from '../../lib/logger';
-import { buildReviewThanksEmbed } from '../../lib/embeds';
+import { ENV } from '../../config/env';
+import { buildReviewThanksEmbed, buildTestimonialEmbed } from '../../lib/embeds';
 
 // Tombol "Beri Rating" pada notif order selesai → tampilkan modal rating.
 export async function handleReviewStart(interaction: ButtonInteraction): Promise<void> {
@@ -66,4 +67,30 @@ export async function handleReviewModal(interaction: ModalSubmitInteraction): Pr
 
   await interaction.editReply({ embeds: [buildReviewThanksEmbed(rating, comment)] });
   logger.info(`[Review] ${interaction.user.tag} rated order ${orderId}: ${rating}/5`);
+
+  // Auto-post testimoni ke channel (hanya rating 4-5, dan hanya bila channel diset).
+  if (rating >= 4 && ENV.TESTIMONIAL_CHANNEL_ID) {
+    try {
+      const service = await prisma.service.findUnique({ where: { id: order.service_id } });
+      const channel = await interaction.client.channels
+        .fetch(ENV.TESTIMONIAL_CHANNEL_ID)
+        .catch(() => null) as TextChannel | null;
+
+      if (channel && channel.isTextBased()) {
+        await channel.send({
+          embeds: [buildTestimonialEmbed({
+            userId:      interaction.user.id,
+            username:    interaction.user.username,
+            avatarUrl:   interaction.user.displayAvatarURL(),
+            rating,
+            comment,
+            serviceName: service?.name || 'Layanan',
+            category:    service?.category || '',
+          })],
+        });
+      }
+    } catch (e: any) {
+      logger.error('[Review] Gagal post testimoni', { error: e.message });
+    }
+  }
 }
