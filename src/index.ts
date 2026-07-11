@@ -30,7 +30,20 @@ try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node lama: abaikan */
 function probeDiscordApi(): Promise<void> {
   return new Promise((resolve) => {
     const req = https.get('https://discord.com/api/v10/gateway', { timeout: 10_000 }, (res) => {
-      logger.info(`[Net] API Discord terjangkau (HTTP ${res.statusCode}).`);
+      const code = res.statusCode;
+      if (code === 429) {
+        const retryAfter = res.headers['retry-after'];
+        logger.error(
+          '[Net] API Discord membalas 429 (RATE LIMITED — IP host sedang diblokir sementara oleh Discord/Cloudflare). ' +
+          (retryAfter ? `Coba lagi setelah ~${retryAfter} detik. ` : '') +
+          'Ini BUKAN bug kode. Penyebab umum: bot di-restart/login TERLALU SERING dalam waktu singkat ' +
+          '(mis. akibat crash-loop saat debugging), atau IP shared hosting bereputasi buruk. ' +
+          'SOLUSI: MATIKAN bot, JANGAN restart berulang, tunggu 30–60 menit, lalu START SEKALI saja. ' +
+          'Kalau tetap 429 setelah menunggu, minta ganti IP/node ke EnderCloud.'
+        );
+      } else {
+        logger.info(`[Net] API Discord terjangkau (HTTP ${code}).`);
+      }
       res.resume();
       resolve();
     });
@@ -295,9 +308,10 @@ async function main(): Promise<void> {
   const readyWatchdog = setTimeout(() => {
     logger.warn(
       '[Boot] Bot login tapi belum "ready" setelah 30 detik. Kemungkinan penyebab: ' +
-      '(1) Jaringan host tidak stabil / IPv6 bermasalah (lihat baris [Net] di atas), ' +
-      '(2) memakai Node.js versi non-LTS (mis. v25) yang belum kompatibel dengan discord.js v14 — pakai Node 20/22, ' +
-      '(3) Privileged Intents belum aktif, atau (4) token/invite bermasalah. ' +
+      '(1) IP host di-RATE LIMIT Discord (cek baris [Net] — kalau HTTP 429, jangan restart berulang, tunggu 30–60 menit lalu start sekali), ' +
+      '(2) jaringan host tidak stabil / IPv6 bermasalah, ' +
+      '(3) Node.js non-LTS (pakai Node 20/22), ' +
+      '(4) Privileged Intents belum aktif, atau (5) token/invite bermasalah. ' +
       'Set env DISCORD_DEBUG=1 lalu restart untuk log detail tahap koneksi.'
     );
   }, 30_000);
