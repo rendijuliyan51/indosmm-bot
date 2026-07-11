@@ -115,6 +115,16 @@ async function registerCommands(): Promise<void> {
 
   const rest = new REST({ timeout: 15000 }).setToken(ENV.DISCORD_TOKEN);
 
+  // Hapus command GLOBAL yang mungkin tersisa dari versi bot lama. Kalau global & guild
+  // sama-sama ada, slash command tampil DOBEL. Bot ini hanya memakai guild commands (instan),
+  // jadi global kita kosongkan.
+  try {
+    await rest.put(Routes.applicationCommands(ENV.DISCORD_CLIENT_ID), { body: [] });
+    logger.info('[Commands] Global commands lama dibersihkan (mencegah duplikat).');
+  } catch (e: any) {
+    logger.warn('[Commands] Gagal membersihkan global commands', { error: e.message });
+  }
+
   const guildIds = [...client.guilds.cache.keys()];
   if (guildIds.length === 0) {
     logger.warn('[Commands] Bot belum berada di guild manapun — command tidak didaftarkan. Undang bot ke server lalu restart.');
