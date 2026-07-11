@@ -24,6 +24,9 @@ export const ENV = {
   LOW_BALANCE_THRESHOLD: parseFloat(optional('LOW_BALANCE_THRESHOLD', '50000')),
   DATABASE_URL:         optional('DATABASE_URL', 'file:./dev.db'),
   TZ:                   optional('TZ', 'Asia/Jakarta'),
+  // URL health-check untuk monitoring uptime (opsional). Bila diisi, bot mem-ping tiap 5 menit;
+  // kalau bot mati, ping berhenti dan layanan monitor akan memberi tahu kamu.
+  HEALTHCHECK_URL:      optional('HEALTHCHECK_URL', ''),
 
   EMOJI: {
     // Platform

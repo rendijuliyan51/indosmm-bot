@@ -36,9 +36,22 @@ model Service {
   refill              Boolean   @default(false)
   refill_days         Int       @default(0)
   active              Boolean   @default(true)
+  // Disembunyikan admin dari katalog & pencarian (blacklist) tanpa menghapus datanya.
+  hidden              Boolean   @default(false)
   last_synced_at      DateTime?
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
+}
+
+// Rating & ulasan pembeli setelah order selesai.
+model Review {
+  id         String   @id @default(uuid())
+  order_id   String   @unique
+  user_id    String
+  service_id String
+  rating     Int
+  comment    String?
+  created_at DateTime @default(now())
 }
 
 model ServiceSnapshot {

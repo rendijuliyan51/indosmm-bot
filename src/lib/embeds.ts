@@ -349,12 +349,23 @@ const STATUS_CONFIG: Record<string, { color: ColorResolvable; emoji: string; lab
   error:           { color: RED,    emoji: '❌', label: 'Error'                      },
 };
 
+function formatDurationShort(ms: number): string {
+  const min = Math.round(ms / 60000);
+  if (min < 1) return '<1 menit';
+  if (min < 60) return `${min} menit`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h < 24) return m > 0 ? `${h} jam ${m} menit` : `${h} jam`;
+  const d = Math.floor(h / 24);
+  return `${d} hari ${h % 24} jam`;
+}
+
 export function buildOrderProgressEmbed(data: {
   orderId: string; serviceName: string; category: string;
   targetLink: string; quantity: number; total: number; status: string;
   startCount?: number | null; remains?: number | null;
   progressBar?: string | null; refillExpiresAt?: Date | null;
-  providerOrderId?: string | null;
+  providerOrderId?: string | null; createdAt?: Date | null;
 }): EmbedBuilder {
   const normalizedStatus = data.status.toLowerCase().trim();
   const cfg   = STATUS_CONFIG[normalizedStatus] ?? { color: DARK, emoji: '🔷', label: data.status };
@@ -367,12 +378,32 @@ export function buildOrderProgressEmbed(data: {
     `Jumlah   : ${data.quantity.toLocaleString('id-ID')}\n` +
     `Total    : ${formatRupiah(data.total)}`;
 
+  // Progres lebih jelas: start count, terkirim, sisa, dan bar.
+  if (data.startCount != null) {
+    desc += `\nStart    : ${data.startCount.toLocaleString('id-ID')}`;
+  }
+  if (data.remains != null && data.quantity > 0) {
+    const done = Math.max(0, data.quantity - data.remains);
+    desc += `\nTerkirim : ${done.toLocaleString('id-ID')} / ${data.quantity.toLocaleString('id-ID')}` +
+            `\nSisa     : ${data.remains.toLocaleString('id-ID')}`;
+  }
   if (data.progressBar) {
-    desc += `\n\n\`${data.progressBar}\``;
+    desc += `\n\`${data.progressBar}\``;
   }
 
-  if (data.startCount != null && data.remains != null) {
-    desc += `\nRemains  : ${data.remains.toLocaleString('id-ID')} dari ${data.quantity.toLocaleString('id-ID')}`;
+  // Estimasi (kasar) waktu selesai berdasarkan progres sejak order dibuat.
+  if (
+    data.createdAt && data.remains != null && data.quantity > 0 &&
+    ['processing', 'in progress', 'inprogress', 'partial'].includes(normalizedStatus)
+  ) {
+    const done = data.quantity - data.remains;
+    if (done > 0 && data.remains > 0) {
+      const elapsed = Date.now() - data.createdAt.getTime();
+      const etaMs   = (elapsed / done) * data.remains;
+      if (etaMs > 0 && etaMs < 30 * 24 * 60 * 60 * 1000) {
+        desc += `\nEstimasi : ~${formatDurationShort(etaMs)} lagi _(perkiraan)_`;
+      }
+    }
   }
 
   if (data.providerOrderId) {
@@ -531,6 +562,108 @@ export function buildTicketClosedEmbed(reason?: string): EmbedBuilder {
     .setDescription(
       (reason ? `Alasan: ${reason}\n\n` : '') +
       'Sesi order selesai. Sampai jumpa di order berikutnya!'
+    )
+    .setFooter(footer())
+    .setTimestamp();
+}
+
+// Tombol "Cari Layanan" untuk ditempel di pesan katalog (di samping dropdown platform).
+export function buildCatalogSearchRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('catalog_search')
+      .setLabel('Cari Layanan')
+      .setEmoji('🔍')
+      .setStyle(ButtonStyle.Primary),
+  );
+}
+
+// Tombol "Beri Rating" untuk ditempel di notif order selesai.
+export function buildReviewButtonRow(orderId: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`review_start_${orderId}`)
+      .setLabel('Beri Rating')
+      .setEmoji('⭐')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+export function buildReviewThanksEmbed(rating: number, comment?: string | null): EmbedBuilder {
+  const stars = '⭐'.repeat(Math.max(1, Math.min(5, rating)));
+  return new EmbedBuilder()
+    .setColor(GOLD)
+    .setTitle('Terima kasih atas ulasannya!')
+    .setDescription(
+      `Rating kamu: ${stars} (${rating}/5)\n` +
+      (comment ? `Ulasan: _${comment}_\n\n` : '\n') +
+      'Masukanmu sangat berarti untuk toko kami. 🙏'
+    )
+    .setFooter(footer())
+    .setTimestamp();
+}
+
+// Embed riwayat order milik user.
+export function buildOrderHistoryEmbed(userId: string, orders: {
+  id: string; serviceName: string; status: string; quantity: number;
+  sellPrice: number; createdAt: Date;
+}[]): EmbedBuilder {
+  if (orders.length === 0) {
+    return new EmbedBuilder()
+      .setColor(BLUE)
+      .setTitle('Riwayat Order')
+      .setDescription(`<@${userId}> kamu belum punya order.`)
+      .setFooter(footer())
+      .setTimestamp();
+  }
+
+  const lines = orders.map(o => {
+    const cfg = STATUS_CONFIG[o.status.toLowerCase().trim()] ?? { emoji: '🔷', label: o.status } as any;
+    const tgl = o.createdAt.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', year: 'numeric' });
+    return `${cfg.emoji} **${o.serviceName}**\n` +
+           `\`${o.id.slice(0, 8)}\` • ${o.quantity.toLocaleString('id-ID')} • ${formatRupiah(o.sellPrice)} • ${cfg.label} • ${tgl}`;
+  });
+
+  return new EmbedBuilder()
+    .setColor(GOLD)
+    .setTitle('Riwayat Order')
+    .setDescription(`<@${userId}> berikut ${orders.length} order terakhir kamu:\n\n${truncateField(lines.join('\n\n'), 4000)}`)
+    .setFooter(footer())
+    .setTimestamp();
+}
+
+// Dashboard statistik admin.
+export function buildStatsEmbed(data: {
+  periodLabel: string;
+  totalOrders: number; completedOrders: number;
+  omzet: number; profit: number;
+  topServices: { name: string; count: number }[];
+  avgRating: number | null; reviewCount: number;
+}): EmbedBuilder {
+  const top = data.topServices.length > 0
+    ? data.topServices.map((t, i) => `${i + 1}. ${t.name} — **${t.count}** order`).join('\n')
+    : '_Belum ada data_';
+
+  const rating = data.avgRating != null
+    ? `${'⭐'.repeat(Math.round(data.avgRating))} ${data.avgRating.toFixed(2)}/5 (${data.reviewCount} ulasan)`
+    : '_Belum ada ulasan_';
+
+  return new EmbedBuilder()
+    .setColor(GOLD)
+    .setTitle(`📊 Statistik Toko — ${data.periodLabel}`)
+    .addFields(
+      {
+        name: '💰 Keuangan',
+        value: `Omzet   : **${formatRupiah(data.omzet)}**\nProfit  : **${formatRupiah(data.profit)}**`,
+        inline: false,
+      },
+      {
+        name: '📦 Order',
+        value: `Total   : **${data.totalOrders}**\nSelesai : **${data.completedOrders}**`,
+        inline: false,
+      },
+      { name: '🔥 Layanan Terlaris', value: top, inline: false },
+      { name: '⭐ Rating Rata-rata', value: rating, inline: false },
     )
     .setFooter(footer())
     .setTimestamp();

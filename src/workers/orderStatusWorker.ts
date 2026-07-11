@@ -7,6 +7,7 @@ import {
   buildOrderActionRow,
   buildOrderCompletedNotif,
   buildOrderFailedNotif,
+  buildReviewButtonRow,
 } from '../lib/embeds';
 import { isRefillExpired } from '../lib/pricing';
 
@@ -14,6 +15,16 @@ const ACTIVE_STATUSES = ['submitted', 'processing', 'partial', 'pending', 'in pr
 
 // Cegah dua run tumpang tindih (mis. saat banyak order membuat satu run > 60 detik).
 let statusCheckRunning = false;
+
+// Kirim DM ke user (best-effort). Kalau DM user tertutup, cukup catat warning.
+async function dmUser(client: Client, userId: string, payload: any): Promise<void> {
+  try {
+    const user = await client.users.fetch(userId);
+    await user.send(payload);
+  } catch (e: any) {
+    logger.info(`[DM] Tidak bisa kirim DM ke ${userId} (mungkin DM ditutup)`, { error: e?.message });
+  }
+}
 
 function buildProgressBar(quantity: number, remains: number): string {
   const done    = Math.max(0, quantity - remains);
@@ -116,6 +127,7 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
           progressBar:     progressBar,
           refillExpiresAt: updated.refill_expires_at,
           providerOrderId: order.provider_order_id,
+          createdAt:       order.created_at,
         });
 
         const row = buildOrderActionRow({
@@ -128,7 +140,7 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
         const components = row.components.length > 0 ? [row] : [];
         await msg.edit({ embeds: [embed], components });
 
-        // Notif user kalau completed
+        // Notif user kalau completed (di ticket + DM), plus tombol beri rating.
         if (statusChanged && newStatus === 'completed') {
           const completedEmbed = buildOrderCompletedNotif({
             userId:      ticket.discord_user_id,
@@ -136,10 +148,14 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
             category:    service.category,
             quantity:    order.quantity,
           });
+          const reviewRow = buildReviewButtonRow(order.id);
           await channel.send({
-            content:  `<@${ticket.discord_user_id}>`,
-            embeds:   [completedEmbed],
+            content:    `<@${ticket.discord_user_id}>`,
+            embeds:     [completedEmbed],
+            components: [reviewRow],
           });
+          // DM notifikasi (tanpa tombol, sekadar pemberitahuan).
+          await dmUser(client, ticket.discord_user_id, { embeds: [completedEmbed] });
 
           // Update ticket status
           await prisma.ticket.update({
@@ -148,7 +164,7 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
           });
         }
 
-        // Notif user kalau failed
+        // Notif user kalau failed (di ticket + DM).
         if (statusChanged && (newStatus === 'failed' || newStatus === 'error')) {
           const failedEmbed = buildOrderFailedNotif({
             userId:      ticket.discord_user_id,
@@ -159,6 +175,7 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
             content: `<@${ticket.discord_user_id}>`,
             embeds:  [failedEmbed],
           });
+          await dmUser(client, ticket.discord_user_id, { embeds: [failedEmbed] });
         }
 
       } catch (err: any) {

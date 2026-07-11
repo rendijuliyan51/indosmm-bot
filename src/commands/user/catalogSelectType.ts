@@ -13,7 +13,7 @@ type ServiceRow = Awaited<ReturnType<typeof prisma.service.findMany>>[number];
  */
 export async function getFilteredServices(category: string, type: string): Promise<ServiceRow[]> {
   const allServices = await prisma.service.findMany({
-    where:   { active: true },
+    where:   { active: true, hidden: false },
     orderBy: { price_sell: 'asc' },
   });
 

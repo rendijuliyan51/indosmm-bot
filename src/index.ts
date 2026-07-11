@@ -15,6 +15,7 @@ import path from 'path';
 import { indosmm } from './providers/indosmm';
 import { buildLowBalanceNotif } from './lib/embeds';
 import { handleMessageCreate } from './bot/handlers/messageCreate';
+import { resolveDbFilePath } from './lib/dbPath';
 import dns from 'dns';
 import https from 'https';
 
@@ -59,6 +60,19 @@ function probeDiscordApi(): Promise<void> {
   });
 }
 
+// Ping URL health-check (mis. healthchecks.io / UptimeRobot push / Better Uptime) supaya
+// kamu dapat notifikasi kalau bot MATI. Diaktifkan hanya bila HEALTHCHECK_URL diisi.
+function pingHealthcheck(): void {
+  if (!ENV.HEALTHCHECK_URL) return;
+  try {
+    const req = https.get(ENV.HEALTHCHECK_URL, { timeout: 10_000 }, (res) => res.resume());
+    req.on('timeout', () => req.destroy());
+    req.on('error', (e: any) => logger.warn('[Health] Ping gagal', { error: e?.message }));
+  } catch (e: any) {
+    logger.warn('[Health] Ping error', { error: e?.message });
+  }
+}
+
 async function checkBalance(): Promise<void> {
   try {
     const balance = await indosmm.getBalance();
@@ -80,6 +94,12 @@ async function registerCommands(): Promise<void> {
       .setDescription('Kelola ticket kamu')
       .addSubcommand((s: SlashCommandSubcommandBuilder) =>
         s.setName('status').setDescription('Lihat status ticket aktif')
+      ),
+    new SlashCommandBuilder()
+      .setName('order')
+      .setDescription('Order kamu')
+      .addSubcommand((s: SlashCommandSubcommandBuilder) =>
+        s.setName('history').setDescription('Lihat riwayat order kamu')
       ),
     new SlashCommandBuilder()
       .setName('admin')
@@ -110,6 +130,35 @@ async function registerCommands(): Promise<void> {
       )
       .addSubcommand((s: SlashCommandSubcommandBuilder) =>
         s.setName('audit-log').setDescription('Lihat audit log admin')
+      )
+      .addSubcommand((s: SlashCommandSubcommandBuilder) =>
+        s.setName('stats')
+          .setDescription('Dashboard statistik toko (omzet, profit, order, terlaris)')
+          .addStringOption(o => o.setName('periode').setDescription('Periode statistik').addChoices(
+            { name: 'Hari ini', value: 'day' },
+            { name: '7 hari', value: 'week' },
+            { name: '30 hari', value: 'month' },
+            { name: 'Semua', value: 'all' },
+          ))
+      )
+      .addSubcommand((s: SlashCommandSubcommandBuilder) =>
+        s.setName('set-markup-category')
+          .setDescription('Set markup per kategori (mis. Instagram 50%)')
+          .addStringOption(o => o.setName('kategori').setDescription('Nama kategori (mis. Instagram, TikTok)').setRequired(true))
+          .addNumberOption(o => o.setName('value').setDescription('Markup persen').setRequired(true))
+      )
+      .addSubcommand((s: SlashCommandSubcommandBuilder) =>
+        s.setName('hide-service')
+          .setDescription('Sembunyikan/tampilkan layanan dari katalog')
+          .addStringOption(o => o.setName('service_id').setDescription('ID layanan provider (angka dari IndoSMM)').setRequired(true))
+          .addBooleanOption(o => o.setName('hidden').setDescription('true = sembunyikan, false = tampilkan').setRequired(true))
+      )
+      .addSubcommand((s: SlashCommandSubcommandBuilder) =>
+        s.setName('broadcast')
+          .setDescription('Kirim pengumuman ke sebuah channel')
+          .addChannelOption(o => o.setName('channel').setDescription('Channel tujuan').setRequired(true))
+          .addStringOption(o => o.setName('pesan').setDescription('Isi pengumuman').setRequired(true))
+          .addStringOption(o => o.setName('judul').setDescription('Judul pengumuman (opsional)'))
       ),
   ].map(c => c.toJSON());
 
@@ -154,7 +203,8 @@ function backupDatabaseBeforeMigration(): void {
     const url = process.env.DATABASE_URL || ENV.DATABASE_URL;
     if (!url.startsWith('file:')) return;
 
-    const dbPath = path.resolve(url.slice('file:'.length));
+    // Cari lokasi file DB yang sebenarnya (cwd vs prisma/) agar backup tidak salah lokasi.
+    const dbPath = resolveDbFilePath();
     if (!existsSync(dbPath)) {
       logger.info('[DB] Database belum ada — lewati backup pra-migrasi (fresh install).');
       return;
@@ -186,7 +236,8 @@ function backupDatabaseBeforeMigration(): void {
 // error "index ... cannot be dropped" saat mereconcile skema lama. Pendekatan ini TIDAK PERNAH
 // men-drop apa pun, jadi aman untuk DB baru maupun DB lama yang sudah berisi data tiket/order.
 const CREATE_TABLE_STATEMENTS: string[] = [
-  `CREATE TABLE IF NOT EXISTS "Service" ("id" TEXT NOT NULL PRIMARY KEY, "provider_name" TEXT NOT NULL, "provider_service_id" TEXT NOT NULL UNIQUE, "category" TEXT NOT NULL, "name" TEXT NOT NULL, "description" TEXT, "description_override" TEXT, "min" INTEGER NOT NULL, "max" INTEGER NOT NULL DEFAULT 0, "price_buy" REAL NOT NULL DEFAULT 0, "price_sell" REAL NOT NULL DEFAULT 0, "markup_type" TEXT NOT NULL DEFAULT 'percentage', "markup_value" REAL NOT NULL DEFAULT 40, "refill" INTEGER NOT NULL DEFAULT 0, "refill_days" INTEGER NOT NULL DEFAULT 0, "active" INTEGER NOT NULL DEFAULT 1, "last_synced_at" DATETIME, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "Service" ("id" TEXT NOT NULL PRIMARY KEY, "provider_name" TEXT NOT NULL, "provider_service_id" TEXT NOT NULL UNIQUE, "category" TEXT NOT NULL, "name" TEXT NOT NULL, "description" TEXT, "description_override" TEXT, "min" INTEGER NOT NULL, "max" INTEGER NOT NULL DEFAULT 0, "price_buy" REAL NOT NULL DEFAULT 0, "price_sell" REAL NOT NULL DEFAULT 0, "markup_type" TEXT NOT NULL DEFAULT 'percentage', "markup_value" REAL NOT NULL DEFAULT 40, "refill" INTEGER NOT NULL DEFAULT 0, "refill_days" INTEGER NOT NULL DEFAULT 0, "active" INTEGER NOT NULL DEFAULT 1, "hidden" INTEGER NOT NULL DEFAULT 0, "last_synced_at" DATETIME, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS "Review" ("id" TEXT NOT NULL PRIMARY KEY, "order_id" TEXT NOT NULL UNIQUE, "user_id" TEXT NOT NULL, "service_id" TEXT NOT NULL, "rating" INTEGER NOT NULL, "comment" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS "ServiceSnapshot" ("id" TEXT NOT NULL PRIMARY KEY, "service_id" TEXT NOT NULL, "raw_json" TEXT NOT NULL, "fetched_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS "CatalogMessage" ("id" TEXT NOT NULL PRIMARY KEY, "guild_id" TEXT NOT NULL, "channel_id" TEXT NOT NULL, "message_id" TEXT, "message_type" TEXT NOT NULL DEFAULT 'catalog', "last_hash" TEXT, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS "Ticket" ("id" TEXT NOT NULL PRIMARY KEY, "discord_user_id" TEXT NOT NULL, "guild_id" TEXT NOT NULL, "ticket_channel_id" TEXT NOT NULL UNIQUE, "status" TEXT NOT NULL DEFAULT 'open', "subject" TEXT NOT NULL, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "closed_at" DATETIME, "archived_at" DATETIME, "closed_by" TEXT, "close_reason" TEXT, "delete_channel_at" DATETIME)`,
@@ -205,6 +256,7 @@ const CREATE_TABLE_STATEMENTS: string[] = [
 const ADD_COLUMN_STATEMENTS: string[] = [
   `ALTER TABLE "Service" ADD COLUMN "description_override" TEXT`,
   `ALTER TABLE "Ticket" ADD COLUMN "delete_channel_at" DATETIME`,
+  `ALTER TABLE "Service" ADD COLUMN "hidden" INTEGER NOT NULL DEFAULT 0`,
 ];
 
 async function initDatabase(): Promise<void> {
@@ -259,6 +311,7 @@ async function main(): Promise<void> {
     try { await checkBalance(); } catch (e: any) { logger.error('[Boot] Balance check failed', { error: e.message }); }
     try { await runDatabaseBackup(); } catch (e: any) { logger.error('[Boot] Backup failed', { error: e.message }); }
     try { scheduleBackup(); } catch (e: any) { logger.error('[Boot] Schedule backup failed', { error: e.message }); }
+    pingHealthcheck();
 
     setInterval(async () => {
       try {
@@ -289,6 +342,9 @@ async function main(): Promise<void> {
     setInterval(async () => {
       try { await checkBalance(); } catch (e: any) { logger.error('[Worker] Balance failed', { error: e.message }); }
     }, 60 * 60 * 1000);
+
+    // Health-check ping tiap 5 menit (hanya bila HEALTHCHECK_URL diisi).
+    setInterval(() => pingHealthcheck(), 5 * 60 * 1000);
 
     logger.info('[Boot] All workers started');
   });

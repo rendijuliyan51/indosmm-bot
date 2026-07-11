@@ -2,7 +2,7 @@ import { Client, TextChannel } from 'discord.js';
 import { createHash } from 'crypto';
 import { prisma } from '../bot/client';
 import { logger } from '../lib/logger';
-import { buildCatalogEmbed, buildCategorySelectMenu } from '../lib/embeds';
+import { buildCatalogEmbed, buildCategorySelectMenu, buildCatalogSearchRow } from '../lib/embeds';
 
 const CATEGORY_MAP: Record<string, string> = {
   'instagram':   'Instagram',
@@ -37,7 +37,7 @@ export async function runCatalogUpdate(client: Client): Promise<void> {
     if (!conf) return;
 
     const services = await prisma.service.findMany({
-      where:   { active: true },
+      where:   { active: true, hidden: false },
       orderBy: { price_sell: 'asc' },
     });
 
@@ -58,13 +58,14 @@ export async function runCatalogUpdate(client: Client): Promise<void> {
     const channel = await client.channels.fetch(conf.channel_id).catch(() => null) as TextChannel | null;
     if (!channel) { logger.error('[Catalog] Channel not found'); return; }
 
-    const embed = buildCatalogEmbed(categories);
-    const row   = buildCategorySelectMenu(categories);
+    const embed     = buildCatalogEmbed(categories);
+    const row       = buildCategorySelectMenu(categories);
+    const searchRow = buildCatalogSearchRow();
 
     if (conf.message_id) {
       const msg = await channel.messages.fetch(conf.message_id).catch(() => null);
       if (msg) {
-        await msg.edit({ embeds: [embed], components: [row] });
+        await msg.edit({ embeds: [embed], components: [row, searchRow] });
         await prisma.catalogMessage.update({
           where: { id: conf.id },
           data:  { last_hash: hash, updated_at: new Date() },
@@ -74,7 +75,7 @@ export async function runCatalogUpdate(client: Client): Promise<void> {
       }
     }
 
-    const newMsg = await channel.send({ embeds: [embed], components: [row] });
+    const newMsg = await channel.send({ embeds: [embed], components: [row, searchRow] });
     await prisma.catalogMessage.update({
       where: { id: conf.id },
       data:  { message_id: newMsg.id, last_hash: hash, updated_at: new Date() },
