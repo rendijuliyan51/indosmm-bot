@@ -1,4 +1,4 @@
-import { ButtonInteraction, TextChannel } from 'discord.js';
+import { ButtonInteraction, TextChannel, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { indosmm } from '../../providers/indosmm';
 import { logger } from '../../lib/logger';
@@ -13,7 +13,7 @@ import { scheduleChannelDeletion } from '../../lib/ticketLifecycle';
 import { ENV } from '../../config/env';
 
 export async function handlePaymentApprove(interaction: ButtonInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const ticketId = interaction.customId.replace('payment_approve_', '');
 
@@ -220,7 +220,7 @@ export async function handlePaymentApprove(interaction: ButtonInteraction): Prom
 }
 
 export async function handlePaymentReject(interaction: ButtonInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const ticketId = interaction.customId.replace('payment_reject_', '');
 

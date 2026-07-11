@@ -1,4 +1,4 @@
-import { ButtonInteraction, TextChannel } from 'discord.js';
+import { ButtonInteraction, TextChannel, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { indosmm } from '../../providers/indosmm';
 import { logger } from '../../lib/logger';
@@ -6,7 +6,7 @@ import { buildRefillEmbed } from '../../lib/embeds';
 import { isRefillExpired } from '../../lib/pricing';
 
 export async function handleRefillRequest(interaction: ButtonInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const ticketId = interaction.customId.replace('refill_request_', '');
 

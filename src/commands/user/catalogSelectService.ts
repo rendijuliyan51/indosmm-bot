@@ -1,4 +1,4 @@
-import { StringSelectMenuInteraction } from 'discord.js';
+import { StringSelectMenuInteraction, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { buildServiceDetailEmbed, buildServiceDetailButtons } from '../../lib/embeds';
 import { setService } from '../../lib/selectionStore';
@@ -10,7 +10,7 @@ export async function handleCatalogSelectService(
   const service   = await prisma.service.findUnique({ where: { id: serviceId } });
 
   if (!service) {
-    await interaction.reply({ content: '❌ Layanan tidak ditemukan.', ephemeral: true });
+    await interaction.reply({ content: '❌ Layanan tidak ditemukan.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -20,7 +20,7 @@ export async function handleCatalogSelectService(
   const row   = buildServiceDetailButtons();
 
   await interaction.reply({
-    ephemeral:  true,
+    flags:      MessageFlags.Ephemeral,
     embeds:     [embed],
     components: [row],
   });

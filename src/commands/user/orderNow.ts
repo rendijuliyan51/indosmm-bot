@@ -1,4 +1,4 @@
-import { ButtonInteraction, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from 'discord.js';
+import { ButtonInteraction, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, MessageFlags } from 'discord.js';
 import { getSelection } from '../../lib/selectionStore';
 import { prisma } from '../../bot/client';
 
@@ -8,14 +8,14 @@ export async function handleOrderNow(interaction: ButtonInteraction): Promise<vo
   if (!serviceId) {
     await interaction.reply({
       content: '❌ Pilih layanan terlebih dahulu dari dropdown di atas.',
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   const service = await prisma.service.findUnique({ where: { id: serviceId } });
   if (!service) {
-    await interaction.reply({ content: '❌ Layanan tidak ditemukan.', ephemeral: true });
+    await interaction.reply({ content: '❌ Layanan tidak ditemukan.', flags: MessageFlags.Ephemeral });
     return;
   }
 

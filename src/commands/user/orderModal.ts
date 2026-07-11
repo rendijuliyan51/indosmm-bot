@@ -1,4 +1,4 @@
-import { ModalSubmitInteraction, ChannelType, PermissionFlagsBits } from 'discord.js';
+import { ModalSubmitInteraction, ChannelType, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { ENV } from '../../config/env';
 import { logger } from '../../lib/logger';
@@ -51,7 +51,7 @@ function normalizeTarget(target: string): string {
 const FINISHED_ORDER_STATUSES = ['completed', 'cancelled', 'canceled', 'failed', 'orphaned'];
 
 export async function handleOrderModal(interaction: ModalSubmitInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const serviceId = interaction.customId.replace('order_modal_', '');
   const service   = await prisma.service.findUnique({ where: { id: serviceId } });
