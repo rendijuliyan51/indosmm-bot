@@ -51,6 +51,16 @@ function normalizeTarget(target: string): string {
 // Status order yang dianggap SUDAH selesai/berhenti (boleh order ulang di link yang sama).
 const FINISHED_ORDER_STATUSES = ['completed', 'cancelled', 'canceled', 'failed', 'orphaned'];
 
+// Cek apakah yang melakukan order adalah admin (punya ADMIN_ROLE_ID). Dipakai untuk
+// mengecualikan admin dari batas minimum belanja (mis. buat order tes bernominal kecil).
+function isAdminMember(interaction: ModalSubmitInteraction): boolean {
+  const roles = (interaction.member as any)?.roles;
+  if (!roles) return false;
+  if (Array.isArray(roles)) return roles.includes(ENV.ADMIN_ROLE_ID);
+  if ('cache' in roles) return roles.cache.has(ENV.ADMIN_ROLE_ID);
+  return false;
+}
+
 export async function handleOrderModal(interaction: ModalSubmitInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -143,7 +153,8 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
   // MINIMUM BELANJA: tolak order yang tagihannya di bawah ambang. Order kecil (mis. Rp 2.000)
   // tidak ekonomis karena deposit minimum IndoSMM Rp 10.000. Kita bantu user dengan memberi
   // tahu quantity minimal untuk mencapai minimum belanja. Set MIN_ORDER_BILL=0 untuk menonaktifkan.
-  if (ENV.MIN_ORDER_BILL > 0 && total < ENV.MIN_ORDER_BILL) {
+  // ADMIN DIKECUALIKAN dari minimum belanja (mis. untuk order tes bernominal kecil).
+  if (!isAdminMember(interaction) && ENV.MIN_ORDER_BILL > 0 && total < ENV.MIN_ORDER_BILL) {
     const perUnit     = service.price_sell / 1000;
     const minQty      = perUnit > 0 ? Math.ceil(ENV.MIN_ORDER_BILL / perUnit) : Infinity;
     const maxBill     = calculateTotal(service.price_sell, service.max);
