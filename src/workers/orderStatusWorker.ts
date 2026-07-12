@@ -7,10 +7,14 @@ import {
   buildOrderActionRow,
   buildOrderCompletedNotif,
   buildOrderFailedNotif,
+  buildOrderCanceledNotif,
+  buildAdminOrderCanceledAlert,
   buildReviewButtonRow,
 } from '../lib/embeds';
 import { isRefillExpired } from '../lib/pricing';
 import { notifyUserWithFallback } from '../lib/notify';
+import { scheduleChannelDeletion } from '../lib/ticketLifecycle';
+import { ENV } from '../config/env';
 
 const ACTIVE_STATUSES = ['submitted', 'processing', 'partial', 'pending', 'in progress'];
 
@@ -51,9 +55,10 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
 
     for (const order of orders) {
       if (!order.provider_order_id) continue;
+      const providerOrderId = order.provider_order_id; // string terjamin (dipakai lintas await)
 
       try {
-        const res = await indosmm.getOrderStatus(order.provider_order_id);
+        const res = await indosmm.getOrderStatus(providerOrderId);
         if (res.error) {
           logger.warn(`[OrderStatus] Provider error for order ${order.id}: ${res.error}`);
           continue;
@@ -91,97 +96,156 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
           logger.info(`[OrderStatus] Order ${order.id}: ${order.status} → ${newStatus}`);
         }
 
-        // Update embed di ticket
+        // Ambil data yang dibutuhkan untuk notifikasi & update status tiket.
+        const service = await prisma.service.findUnique({ where: { id: order.service_id } });
+        const ticket  = await prisma.ticket.findUnique({ where: { id: order.ticket_id } });
+
+        // Update embed progress di channel tiket (BEST-EFFORT). Kalau channel/pesan sudah tidak
+        // ada (mis. tiket sudah ditutup), JANGAN berhenti — status terminal seperti canceled/
+        // failed tetap wajib memberi tahu pembeli & admin serta menutup tiket.
         const botMsg = await prisma.botMessage.findFirst({
           where: { ticket_id: order.ticket_id, message_type: 'order_progress' },
         });
-        if (!botMsg) continue;
-
-        const channel = await client.channels.fetch(botMsg.channel_id).catch(() => null) as TextChannel | null;
-        if (!channel) continue;
-
-        const msg = await channel.messages.fetch(botMsg.message_id).catch(() => null);
-        if (!msg) continue;
-
-        const service = await prisma.service.findUnique({ where: { id: order.service_id } });
-        if (!service) continue;
-
-        const ticket = await prisma.ticket.findUnique({ where: { id: order.ticket_id } });
-        if (!ticket) continue;
-
-        const progressBar = (remains != null && startCount != null && order.quantity > 0)
-          ? buildProgressBar(order.quantity, remains)
+        const channel = botMsg
+          ? (await client.channels.fetch(botMsg.channel_id).catch(() => null)) as TextChannel | null
+          : null;
+        const msg = (botMsg && channel)
+          ? await channel.messages.fetch(botMsg.message_id).catch(() => null)
           : null;
 
-        const refillExpired = isRefillExpired(updated.refill_expires_at);
+        if (msg && service) {
+          const progressBar = (remains != null && startCount != null && order.quantity > 0)
+            ? buildProgressBar(order.quantity, remains)
+            : null;
 
-        const embed = buildOrderProgressEmbed({
-          orderId:         order.id,
-          serviceName:     service.name,
-          category:        service.category,
-          targetLink:      order.target_link,
-          quantity:        order.quantity,
-          total:           order.sell_price,
-          status:          newStatus,
-          startCount:      startCount,
-          remains:         remains,
-          progressBar:     progressBar,
-          refillExpiresAt: updated.refill_expires_at,
-          providerOrderId: order.provider_order_id,
-          createdAt:       order.created_at,
-          serviceId:       service.provider_service_id,
-          ticketId:        order.ticket_id,
-        });
+          const embed = buildOrderProgressEmbed({
+            orderId:         order.id,
+            serviceName:     service.name,
+            category:        service.category,
+            targetLink:      order.target_link,
+            quantity:        order.quantity,
+            total:           order.sell_price,
+            status:          newStatus,
+            startCount:      startCount,
+            remains:         remains,
+            progressBar:     progressBar,
+            refillExpiresAt: updated.refill_expires_at,
+            providerOrderId: order.provider_order_id,
+            createdAt:       order.created_at,
+            serviceId:       service.provider_service_id,
+            ticketId:        order.ticket_id,
+          });
 
-        const row = buildOrderActionRow({
-          ticketId:       order.ticket_id,
-          supportsRefill: service.refill,
-          refillExpired:  refillExpired,
-          status:         newStatus,
-        });
+          const row = buildOrderActionRow({
+            ticketId:       order.ticket_id,
+            supportsRefill: service.refill,
+            refillExpired:  isRefillExpired(updated.refill_expires_at),
+            status:         newStatus,
+          });
 
-        const components = row.components.length > 0 ? [row] : [];
-        await msg.edit({ embeds: [embed], components });
+          const components = row.components.length > 0 ? [row] : [];
+          await msg.edit({ embeds: [embed], components }).catch(() => {});
+        }
 
-        // Notif user kalau completed (di ticket + DM), plus tombol beri rating.
+        // Tanpa data tiket, pembeli tidak bisa diberi tahu — lewati sisanya.
+        if (!ticket) continue;
+        const serviceName = service?.name ?? 'Layanan';
+
+        // === COMPLETED === (notif di tiket bila ada + DM, plus tombol beri rating)
         if (statusChanged && newStatus === 'completed') {
           const completedEmbed = buildOrderCompletedNotif({
             userId:          ticket.discord_user_id,
-            serviceName:     service.name,
-            category:        service.category,
+            serviceName:     serviceName,
+            category:        service?.category ?? '',
             quantity:        order.quantity,
             orderId:         order.id,
-            refillSupported: service.refill,
+            refillSupported: Boolean(service?.refill),
             refillExpiresAt: updated.refill_expires_at,
           });
           const reviewRow = buildReviewButtonRow(order.id);
-          await channel.send({
-            content:    `<@${ticket.discord_user_id}>`,
-            embeds:     [completedEmbed],
-            components: [reviewRow],
-          });
-          // DM notifikasi (tanpa tombol, sekadar pemberitahuan).
+          if (channel) {
+            await channel.send({
+              content:    `<@${ticket.discord_user_id}>`,
+              embeds:     [completedEmbed],
+              components: [reviewRow],
+            }).catch(() => {});
+          }
           await dmUser(client, ticket.discord_user_id, { embeds: [completedEmbed] });
 
-          // Update ticket status
           await prisma.ticket.update({
             where: { id: order.ticket_id },
             data:  { status: 'completed' },
           });
         }
 
-        // Notif user kalau failed (di ticket + DM).
+        // === FAILED / ERROR ===
         if (statusChanged && (newStatus === 'failed' || newStatus === 'error')) {
           const failedEmbed = buildOrderFailedNotif({
             userId:      ticket.discord_user_id,
-            serviceName: service.name,
+            serviceName: serviceName,
             reason:      res.error || 'Order gagal diproses oleh provider.',
           });
-          await channel.send({
-            content: `<@${ticket.discord_user_id}>`,
-            embeds:  [failedEmbed],
-          });
+          if (channel) {
+            await channel.send({
+              content: `<@${ticket.discord_user_id}>`,
+              embeds:  [failedEmbed],
+            }).catch(() => {});
+          }
           await dmUser(client, ticket.discord_user_id, { embeds: [failedEmbed] });
+        }
+
+        // === CANCELED (dibatalkan PROVIDER) ===
+        // Kebijakan: TIDAK ada refund — order diganti dengan layanan baru. Beri tahu pembeli &
+        // admin, lalu tutup tiket (channel dihapus ~5 menit lagi) agar bisa lanjut ke pergantian.
+        if (statusChanged && (newStatus === 'canceled' || newStatus === 'cancelled')) {
+          const canceledEmbed = buildOrderCanceledNotif({
+            userId:      ticket.discord_user_id,
+            serviceName: serviceName,
+            orderId:     order.id,
+          });
+
+          // Beri tahu pembeli: di channel (best-effort) + DM dengan fallback ke admin log.
+          if (channel) {
+            await channel.send({
+              content: `<@${ticket.discord_user_id}>`,
+              embeds:  [canceledEmbed],
+            }).catch(() => {});
+          }
+          await notifyUserWithFallback(client, ticket.discord_user_id, { embeds: [canceledEmbed] });
+
+          // Alert admin: perlu proses PERGANTIAN layanan (bukan refund).
+          try {
+            const adminChannel = await client.channels.fetch(ENV.ADMIN_LOG_CHANNEL_ID).catch(() => null) as TextChannel | null;
+            if (adminChannel) {
+              await adminChannel.send({
+                content:         `<@&${ENV.ADMIN_ROLE_ID}>`,
+                embeds:          [buildAdminOrderCanceledAlert({
+                  orderId:         order.id,
+                  userId:          ticket.discord_user_id,
+                  serviceName:     serviceName,
+                  total:           order.sell_price,
+                  providerOrderId: providerOrderId,
+                })],
+                allowedMentions: { roles: [ENV.ADMIN_ROLE_ID] },
+              });
+            }
+          } catch (e: any) {
+            logger.warn('[OrderStatus] Gagal alert admin (canceled)', { error: e?.message });
+          }
+
+          // Tutup tiket + jadwalkan hapus channel (default ~5 menit) supaya cepat lanjut ke
+          // pergantian layanan baru.
+          if (!['closed', 'cancelled', 'orphaned'].includes(ticket.status)) {
+            await prisma.ticket.update({
+              where: { id: order.ticket_id },
+              data: {
+                status:       'cancelled',
+                closed_at:    new Date(),
+                close_reason: 'Order dibatalkan provider — akan diganti layanan baru.',
+              },
+            });
+            await scheduleChannelDeletion(order.ticket_id);
+          }
         }
 
       } catch (err: any) {

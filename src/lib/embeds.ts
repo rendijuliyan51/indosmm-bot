@@ -549,6 +549,47 @@ export function buildRefillEmbed(data: {
     .setTimestamp();
 }
 
+// Notif ke PEMBELI saat order dibatalkan oleh PROVIDER (bukan oleh admin/pembeli).
+// Kebijakan toko: tidak ada refund — order diganti dengan layanan baru.
+export function buildOrderCanceledNotif(data: {
+  userId: string; serviceName: string; orderId: string;
+}): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(RED)
+    .setTitle('Order Dibatalkan Provider')
+    .setDescription(
+      `Hai <@${data.userId}>, mohon maaf — order kamu dibatalkan oleh **provider**.\n\n` +
+      `📦 ${data.serviceName}\n` +
+      `🆔 Order: \`${data.orderId.slice(0, 8)}\`\n\n` +
+      `Sesuai kebijakan, order yang dibatalkan provider akan **DIGANTI dengan layanan baru** ` +
+      `(bukan refund). Admin akan segera membantu proses pergantiannya — mohon tunggu sebentar ` +
+      `atau hubungi admin ya. 🙏`
+    )
+    .setFooter(footer())
+    .setTimestamp();
+}
+
+// Alert ke ADMIN saat provider membatalkan order yang SUDAH dibayar pembeli.
+// Menandai bahwa perlu tindakan: mengganti layanan (BUKAN refund).
+export function buildAdminOrderCanceledAlert(data: {
+  orderId: string; userId: string; serviceName: string; total: number; providerOrderId: string;
+}): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(RED)
+    .setTitle('🚫 Order Dibatalkan Provider — Perlu Pergantian Layanan')
+    .setDescription(
+      `Order dibatalkan di sisi provider. **Kebijakan: GANTI layanan (BUKAN refund).**\n\n` +
+      `🆔 Order       : \`${data.orderId.slice(0, 8)}\`\n` +
+      `📦 Layanan     : ${data.serviceName}\n` +
+      `👤 Pembeli     : <@${data.userId}>\n` +
+      `💰 Sudah bayar : **${formatRupiah(data.total)}**\n` +
+      `🔗 Provider ID : \`${data.providerOrderId}\`\n\n` +
+      `➡️ Segera koordinasikan layanan pengganti dengan pembeli. Tiket lama otomatis ditutup.`
+    )
+    .setFooter(footer())
+    .setTimestamp();
+}
+
 // Notif informatif saat order baru dibuat (belum ada bukti bayar) — TANPA tombol approve.
 export function buildAdminNewOrderNotif(data: {
   ticketId: string; userId: string; serviceName: string; total: number; channelId: string;
