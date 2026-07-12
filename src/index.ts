@@ -16,8 +16,13 @@ import { indosmm } from './providers/indosmm';
 import { buildLowBalanceNotif } from './lib/embeds';
 import { handleMessageCreate } from './bot/handlers/messageCreate';
 import { resolveDbFilePath } from './lib/dbPath';
+import { createHash } from 'crypto';
 import dns from 'dns';
 import https from 'https';
+
+// Helper jeda sederhana. Dipakai untuk "stagger" boot supaya panggilan REST ke Discord
+// tidak meledak barengan saat startup (mengurangi risiko 429 / Cloudflare IP ban).
+const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
 
 // PENTING: paksa DNS mengutamakan IPv4. Di banyak host (container/VPS, termasuk sebagian
 // EnderCloud) konektivitas IPv6 rusak/tidak terhubung. Karena undici (dipakai discord.js untuk
@@ -86,9 +91,11 @@ async function checkBalance(): Promise<void> {
   }
 }
 
-async function registerCommands(): Promise<void> {
-  logger.info('[Commands] Registering slash commands...');
-  const commands = [
+// Bangun daftar definisi slash command (JSON). Dipisah dari proses register agar bisa
+// dipakai ulang (register saat boot & register khusus guild baru) dan di-hash untuk deteksi
+// perubahan.
+function buildCommandsJson(): any[] {
+  return [
     new SlashCommandBuilder()
       .setName('ticket')
       .setDescription('Kelola ticket kamu')
@@ -166,7 +173,60 @@ async function registerCommands(): Promise<void> {
           .addStringOption(o => o.setName('judul').setDescription('Judul pengumuman (opsional)'))
       ),
   ].map(c => c.toJSON());
+}
 
+// Baca nilai dari tabel key-value BotState (best-effort; kembalikan null bila belum ada).
+async function readBotState(key: string): Promise<string | null> {
+  try {
+    const rows = await prisma.$queryRawUnsafe<Array<{ value: string }>>(
+      'SELECT "value" FROM "BotState" WHERE "key" = ?', key,
+    );
+    return rows?.[0]?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Simpan nilai ke BotState (upsert).
+async function writeBotState(key: string, value: string): Promise<void> {
+  await prisma.$executeRawUnsafe(
+    'INSERT INTO "BotState" ("key", "value", "updated_at") VALUES (?, ?, CURRENT_TIMESTAMP) ' +
+    'ON CONFLICT("key") DO UPDATE SET "value" = excluded."value", "updated_at" = CURRENT_TIMESTAMP',
+    key, value,
+  );
+}
+
+// Register command ke SATU guild (dipakai saat bot diundang ke server baru, tanpa
+// perlu re-register ke semua guild atau restart).
+async function registerCommandsForGuild(guildId: string): Promise<void> {
+  try {
+    const commands = buildCommandsJson();
+    const rest = new REST({ timeout: 15000 }).setToken(ENV.DISCORD_TOKEN);
+    await rest.put(Routes.applicationGuildCommands(ENV.DISCORD_CLIENT_ID, guildId), { body: commands });
+    logger.info(`[Commands] Command didaftarkan untuk guild baru ${guildId}`);
+  } catch (e: any) {
+    logger.error(`[Commands] Gagal daftar command untuk guild baru ${guildId}`, { error: e.message });
+  }
+}
+
+async function registerCommands(): Promise<void> {
+  const commands = buildCommandsJson();
+
+  // PENTING (anti rate-limit): JANGAN register ulang tiap boot. Endpoint pendaftaran command
+  // punya limit ketat; kalau bot sering restart/crash-loop, PUT global + per-guild yang
+  // berulang bisa memicu 429 sampai Cloudflare mem-blokir IP host ~1 jam. Kita hanya register
+  // bila definisi command BERUBAH (dibandingkan via hash yang disimpan di DB). Paksa register
+  // ulang dengan env FORCE_REGISTER_COMMANDS=1 (mis. sekali setelah menambah command baru).
+  const force = process.env.FORCE_REGISTER_COMMANDS === '1';
+  const hash  = createHash('md5').update(JSON.stringify(commands)).digest('hex');
+  const prevHash = await readBotState('commands_hash');
+
+  if (!force && prevHash === hash) {
+    logger.info('[Commands] Definisi command tidak berubah — lewati pendaftaran (hemat request, cegah 429). Set FORCE_REGISTER_COMMANDS=1 untuk memaksa.');
+    return;
+  }
+
+  logger.info(`[Commands] Registering slash commands... (alasan: ${force ? 'FORCE_REGISTER_COMMANDS' : prevHash ? 'definisi berubah' : 'pertama kali'})`);
   const rest = new REST({ timeout: 15000 }).setToken(ENV.DISCORD_TOKEN);
 
   // Hapus command GLOBAL yang mungkin tersisa dari versi bot lama. Kalau global & guild
@@ -181,7 +241,7 @@ async function registerCommands(): Promise<void> {
 
   const guildIds = [...client.guilds.cache.keys()];
   if (guildIds.length === 0) {
-    logger.warn('[Commands] Bot belum berada di guild manapun — command tidak didaftarkan. Undang bot ke server lalu restart.');
+    logger.warn('[Commands] Bot belum berada di guild manapun — command tidak didaftarkan. Undang bot ke server (command akan otomatis terdaftar saat join).');
     return;
   }
 
@@ -199,6 +259,13 @@ async function registerCommands(): Promise<void> {
     }
   }
   logger.info(`[Commands] Slash commands registered on ${registered}/${guildIds.length} guild(s)`);
+
+  // Simpan hash HANYA bila SEMUA guild berhasil, supaya kalau ada yang gagal, boot berikutnya
+  // mencoba lagi (tidak langsung ter-skip).
+  if (registered === guildIds.length) {
+    await writeBotState('commands_hash', hash).catch((e: any) =>
+      logger.warn('[Commands] Gagal menyimpan hash command', { error: e.message }));
+  }
 }
 
 // Salin file database SEBELUM migrasi sebagai jaring pengaman. Kalau migrasi bermasalah,
@@ -254,6 +321,9 @@ const CREATE_TABLE_STATEMENTS: string[] = [
   `CREATE TABLE IF NOT EXISTS "AdminAuditLog" ("id" TEXT NOT NULL PRIMARY KEY, "actor_user_id" TEXT NOT NULL, "action" TEXT NOT NULL, "target_type" TEXT, "target_id" TEXT, "details_json" TEXT, "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS "RefillRequest" ("id" TEXT NOT NULL PRIMARY KEY, "order_id" TEXT NOT NULL, "ticket_id" TEXT NOT NULL, "provider_refill_id" TEXT, "status" TEXT NOT NULL DEFAULT 'pending', "requested_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "completed_at" DATETIME, "notes" TEXT)`,
   `CREATE TABLE IF NOT EXISTS "CatalogSelection" ("discord_user_id" TEXT NOT NULL PRIMARY KEY, "category" TEXT, "service_type" TEXT, "service_id" TEXT, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  // Key-value sederhana untuk state internal bot (mis. hash definisi slash command agar tidak
+  // register ulang tiap boot — lihat registerCommands()).
+  `CREATE TABLE IF NOT EXISTS "BotState" ("key" TEXT NOT NULL PRIMARY KEY, "value" TEXT NOT NULL, "updated_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 ];
 
 // Kolom baru untuk DB LAMA yang tabelnya sudah ada. ALTER gagal "duplicate column name"
@@ -306,13 +376,21 @@ async function main(): Promise<void> {
     // Register commands SETELAH bot ready — pakai guild commands agar instan
     try { await registerCommands(); } catch (e: any) { logger.error('[Boot] Command register failed', { error: e.message }); }
 
+    // Stagger boot: beri jeda antar-worker yang banyak memanggil REST Discord supaya panggilan
+    // tidak meledak bersamaan saat startup. Ini menurunkan puncak request/detik dan akumulasi
+    // "invalid request" yang bisa memicu 429 / Cloudflare IP ban, terutama saat restart beruntun.
     try { await runRecovery(client); } catch (e: any) { logger.error('[Boot] Recovery failed', { error: e.message }); }
+    await sleep(1500);
     // Segera bersihkan channel yang jatuh tempo hapus saat bot mati, dan sinkronkan status
     // order aktif langsung (jangan menunggu interval 60 detik) agar tidak "amnesia" pasca-restart.
     try { await runTicketChannelSweeper(client); } catch (e: any) { logger.error('[Boot] ChannelSweeper failed', { error: e.message }); }
+    await sleep(1500);
     try { await runOrderStatusCheck(client); } catch (e: any) { logger.error('[Boot] OrderStatus initial failed', { error: e.message }); }
+    await sleep(1500);
     try { await runServiceSync(); } catch (e: any) { logger.error('[Boot] ServiceSync failed', { error: e.message }); }
+    await sleep(1500);
     try { await runCatalogUpdate(client); } catch (e: any) { logger.error('[Boot] Catalog failed', { error: e.message }); }
+    await sleep(1000);
     try { await checkBalance(); } catch (e: any) { logger.error('[Boot] Balance check failed', { error: e.message }); }
     try { await runDatabaseBackup(); } catch (e: any) { logger.error('[Boot] Backup failed', { error: e.message }); }
     try { scheduleBackup(); } catch (e: any) { logger.error('[Boot] Schedule backup failed', { error: e.message }); }
@@ -358,6 +436,13 @@ async function main(): Promise<void> {
     try { await handleMemberLeave(client, member as GuildMember); } catch (e: any) { logger.error('[Event] MemberLeave failed', { error: e.message }); }
   });
 
+  // Bot diundang ke server baru → daftarkan command HANYA untuk guild itu (tidak perlu
+  // re-register ke semua guild atau restart). Aman dari sisi rate-limit.
+  client.on('guildCreate', async (guild) => {
+    logger.info(`[Event] Bergabung ke guild baru ${guild.id} (${guild.name})`);
+    try { await registerCommandsForGuild(guild.id); } catch (e: any) { logger.error('[Event] guildCreate register failed', { error: e.message }); }
+  });
+
   client.on('interactionCreate', handleInteraction);
 
   // Tangkap bukti pembayaran (gambar) yang diupload user di channel ticket.
@@ -365,6 +450,29 @@ async function main(): Promise<void> {
 
   // Diagnostik koneksi: bila bot "nyangkut" setelah login, listener ini menampilkan sebabnya
   // (mis. intent bermasalah / gateway putus) sehingga tidak diam tanpa info.
+  // OBSERVABILITY RATE LIMIT: log setiap kali REST Discord kena rate limit, LENGKAP dengan
+  // route/method-nya. Ini menjawab "request mana yang bikin kena limit" tanpa menebak — cek
+  // log [REST] untuk tahu endpoint persisnya (mis. edit message di route order/catalog).
+  client.rest.on('rateLimited', (info: any) => {
+    logger.warn('[REST] Kena rate limit Discord', {
+      global:        info?.global,
+      method:        info?.method,
+      route:         info?.route,
+      url:           info?.url,
+      limit:         info?.limit,
+      timeToResetMs: info?.timeToReset,
+    });
+  });
+  // PERINGATAN DINI Cloudflare: Discord menghitung "invalid request" (401/403/429). Bila terlalu
+  // banyak dalam 10 menit, SELURUH IP host diblokir ~1 jam (inilah gejala "tiba-tiba 429").
+  // Listener ini memberi peringatan sebelum ambang tercapai.
+  client.rest.on('invalidRequestWarning', (info: any) => {
+    logger.error('[REST] PERINGATAN: banyak invalid request (401/403/429) — mendekati Cloudflare IP ban ~1 jam! Periksa penyebab (restart beruntun / permission channel).', {
+      count:           info?.count,
+      remainingTimeMs: info?.remainingTime,
+    });
+  });
+
   client.on('error',          (e: any) => logger.error('[Discord] Client error', { error: e?.message }));
   client.on('shardError',     (e: any) => logger.error('[Discord] Shard error', { error: e?.message }));
   client.on('shardDisconnect', (ev: any, id: number) => logger.warn(`[Discord] Shard ${id} disconnected`, { code: ev?.code, reason: ev?.reason }));
