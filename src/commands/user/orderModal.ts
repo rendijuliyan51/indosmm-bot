@@ -2,7 +2,7 @@ import { ModalSubmitInteraction, ChannelType, PermissionFlagsBits, MessageFlags,
 import { prisma } from '../../bot/client';
 import { ENV } from '../../config/env';
 import { logger } from '../../lib/logger';
-import { calculateTotal } from '../../lib/pricing';
+import { calculateTotal, formatRupiah } from '../../lib/pricing';
 import { buildInvoiceEmbed, buildAdminNewOrderNotif } from '../../lib/embeds';
 import { buildDynamicQrisPayload, buildQrisPngBuffer } from '../../lib/qris';
 import { clearSelection } from '../../lib/selectionStore';
@@ -88,19 +88,27 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
     return;
   }
 
-  // Cek apakah user sudah punya ticket aktif
-  const existingTicket = await prisma.ticket.findFirst({
-    where: {
-      discord_user_id: interaction.user.id,
-      status: { notIn: ['closed', 'cancelled', 'orphaned', 'completed'] },
-    },
-  });
-
-  if (existingTicket) {
-    await interaction.editReply({
-      content: `❌ Kamu masih punya ticket aktif di <#${existingTicket.ticket_channel_id}>.\nSelesaikan atau tutup ticket tersebut sebelum membuat order baru.`,
+  // Batasi JUMLAH ticket aktif per user (anti-spam channel), BUKAN melarang total.
+  // User boleh punya beberapa order berjalan sekaligus untuk layanan/platform berbeda
+  // (mis. Instagram Likes + TikTok Likes) selama belum melewati batas. Order duplikat pada
+  // link + layanan yang sama tetap dicegah oleh guard di bawah. Set MAX_ACTIVE_TICKETS_PER_USER=0
+  // untuk tanpa batas.
+  if (ENV.MAX_ACTIVE_TICKETS_PER_USER > 0) {
+    const activeTicketCount = await prisma.ticket.count({
+      where: {
+        discord_user_id: interaction.user.id,
+        status: { notIn: ['closed', 'cancelled', 'orphaned', 'completed'] },
+      },
     });
-    return;
+
+    if (activeTicketCount >= ENV.MAX_ACTIVE_TICKETS_PER_USER) {
+      await interaction.editReply({
+        content:
+          `❌ Kamu sudah punya **${activeTicketCount}** ticket aktif (maksimal ${ENV.MAX_ACTIVE_TICKETS_PER_USER}).\n` +
+          `Selesaikan atau tutup salah satu ticket dulu sebelum membuat order baru.`,
+      });
+      return;
+    }
   }
 
   // CEGAH ORDER DUPLIKAT: IndoSMM melarang menumpuk order pada LINK + LAYANAN yang sama
@@ -131,6 +139,36 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
   const total    = calculateTotal(service.price_sell, quantity);
   const buyTotal = calculateTotal(service.price_buy, quantity);
   const profit   = total - buyTotal;
+
+  // MINIMUM BELANJA: tolak order yang tagihannya di bawah ambang. Order kecil (mis. Rp 2.000)
+  // tidak ekonomis karena deposit minimum IndoSMM Rp 10.000. Kita bantu user dengan memberi
+  // tahu quantity minimal untuk mencapai minimum belanja. Set MIN_ORDER_BILL=0 untuk menonaktifkan.
+  if (ENV.MIN_ORDER_BILL > 0 && total < ENV.MIN_ORDER_BILL) {
+    const perUnit     = service.price_sell / 1000;
+    const minQty      = perUnit > 0 ? Math.ceil(ENV.MIN_ORDER_BILL / perUnit) : Infinity;
+    const maxBill     = calculateTotal(service.price_sell, service.max);
+
+    // Kalau bahkan pada qty maksimum pun tagihan masih di bawah minimum belanja, layanan ini
+    // tidak bisa memenuhi minimum — arahkan user memilih layanan lain.
+    if (minQty > service.max || maxBill < ENV.MIN_ORDER_BILL) {
+      await interaction.editReply({
+        content:
+          `❌ Minimum belanja **${formatRupiah(ENV.MIN_ORDER_BILL)}** per order.\n` +
+          `Layanan ini maksimal hanya **${formatRupiah(maxBill)}** (pada qty maksimum ${service.max.toLocaleString('id-ID')}), ` +
+          `jadi tidak bisa memenuhi minimum belanja. Silakan pilih layanan lain.`,
+      });
+      return;
+    }
+
+    await interaction.editReply({
+      content:
+        `❌ Minimum belanja **${formatRupiah(ENV.MIN_ORDER_BILL)}** per order.\n` +
+        `Tagihan pesananmu baru **${formatRupiah(total)}** untuk ${quantity.toLocaleString('id-ID')} qty.\n\n` +
+        `👉 Pesan minimal **${minQty.toLocaleString('id-ID')}** untuk layanan ini agar mencapai minimum belanja.`,
+    });
+    return;
+  }
+
   // #6: refill_expires_at TIDAK diset di sini. Countdown garansi dimulai saat order
   // di-approve & dikirim ke provider (lihat paymentHandler).
 
