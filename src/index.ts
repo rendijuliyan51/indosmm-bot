@@ -107,6 +107,14 @@ function buildCommandsJson(): any[] {
       .setDescription('Order kamu')
       .addSubcommand((s: SlashCommandSubcommandBuilder) =>
         s.setName('history').setDescription('Lihat riwayat order kamu')
+      )
+      .addSubcommand((s: SlashCommandSubcommandBuilder) =>
+        s.setName('refill')
+          .setDescription('Klaim garansi/refill order (bisa dipakai walau tiket sudah ditutup)')
+          .addStringOption(o =>
+            o.setName('order_id')
+              .setDescription('ID order (8 karakter, lihat di /order history)')
+              .setRequired(true))
       ),
     new SlashCommandBuilder()
       .setName('admin')

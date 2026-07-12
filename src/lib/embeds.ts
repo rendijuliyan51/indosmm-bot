@@ -470,8 +470,27 @@ export function buildOrderActionRow(data: {
 
 export function buildOrderCompletedNotif(data: {
   userId: string; serviceName: string; category: string; quantity: number;
+  orderId?: string; refillSupported?: boolean; refillExpiresAt?: Date | null;
 }): EmbedBuilder {
   const emoji = getCategoryEmoji(data.category);
+
+  // Instruksi refill/garansi yang JELAS — termasuk cara klaim lewat command, karena tiket bisa
+  // ditutup otomatis setelah order selesai (refill tetap bisa diklaim setelah tutup).
+  let refillNote: string;
+  if (data.refillSupported && data.refillExpiresAt) {
+    const tgl = data.refillExpiresAt.toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', year: 'numeric' });
+    const idHint = data.orderId ? ` \`${data.orderId.slice(0, 8)}\`` : '';
+    refillNote =
+      `\n\n🔄 **Garansi/Refill aktif sampai ${tgl}.**\n` +
+      `Kalau jumlahnya berkurang, klaim refill dengan salah satu cara:\n` +
+      `• Klik tombol **Request Refill** selagi tiket ini masih terbuka, atau\n` +
+      `• Ketik **/order refill** dengan order_id${idHint} — bisa dipakai kapan saja, bahkan setelah tiket ditutup.`;
+  } else if (data.refillSupported) {
+    refillNote = `\n\nJika ada masalah, gunakan tombol **Request Refill** di bawah, atau ketik **/order refill** dengan ID order kamu.`;
+  } else {
+    refillNote = `\n\nℹ️ Layanan ini tanpa garansi refill. Jika ada kendala, silakan hubungi admin.`;
+  }
+
   return new EmbedBuilder()
     .setColor(GREEN)
     .setTitle('Order Selesai!')
@@ -479,8 +498,8 @@ export function buildOrderCompletedNotif(data: {
       `Hei <@${data.userId}>! Order kamu sudah selesai diproses.\n\n` +
       `${emoji} ${data.serviceName}\n` +
       `Jumlah : ${data.quantity.toLocaleString('id-ID')}\n\n` +
-      `Silakan cek akun kamu sekarang.\n` +
-      `Jika ada masalah, gunakan tombol **Request Refill** di bawah.`
+      `Silakan cek akun kamu sekarang.` +
+      refillNote
     )
     .setFooter(footer())
     .setTimestamp();
@@ -672,6 +691,7 @@ export function buildAdminServiceSearchEmbed(keyword: string, total: number, ite
 export function buildOrderHistoryEmbed(userId: string, orders: {
   id: string; serviceName: string; status: string; quantity: number;
   sellPrice: number; createdAt: Date;
+  refillActive?: boolean; refillExpiresAt?: Date | null;
 }[]): EmbedBuilder {
   if (orders.length === 0) {
     return new EmbedBuilder()
@@ -685,14 +705,25 @@ export function buildOrderHistoryEmbed(userId: string, orders: {
   const lines = orders.map(o => {
     const cfg = STATUS_CONFIG[o.status.toLowerCase().trim()] ?? { emoji: '🔷', label: o.status } as any;
     const tgl = o.createdAt.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', year: 'numeric' });
-    return `${cfg.emoji} **${o.serviceName}**\n` +
-           `\`${o.id.slice(0, 8)}\` • ${o.quantity.toLocaleString('id-ID')} • ${formatRupiah(o.sellPrice)} • ${cfg.label} • ${tgl}`;
+    let line = `${cfg.emoji} **${o.serviceName}**\n` +
+               `\`${o.id.slice(0, 8)}\` • ${o.quantity.toLocaleString('id-ID')} • ${formatRupiah(o.sellPrice)} • ${cfg.label} • ${tgl}`;
+    if (o.refillActive) {
+      const exp = o.refillExpiresAt
+        ? o.refillExpiresAt.toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', year: 'numeric' })
+        : null;
+      line += `\n   🔄 Garansi aktif${exp ? ` s/d ${exp}` : ''} — klaim: \`/order refill order_id: ${o.id.slice(0, 8)}\``;
+    }
+    return line;
   });
+
+  const anyRefill = orders.some(o => o.refillActive);
+  const header = `<@${userId}> berikut ${orders.length} order terakhir kamu:` +
+    (anyRefill ? `\n💡 Order bertanda 🔄 masih bergaransi — refill bisa diklaim lewat \`/order refill\` kapan saja.` : '');
 
   return new EmbedBuilder()
     .setColor(GOLD)
     .setTitle('Riwayat Order')
-    .setDescription(`<@${userId}> berikut ${orders.length} order terakhir kamu:\n\n${truncateField(lines.join('\n\n'), 4000)}`)
+    .setDescription(`${header}\n\n${truncateField(lines.join('\n\n'), 4000)}`)
     .setFooter(footer())
     .setTimestamp();
 }
