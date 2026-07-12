@@ -26,6 +26,15 @@ export const ENV = {
   QRIS_STATIC_PAYLOAD:  optional('QRIS_STATIC_PAYLOAD', ''),
   MARKUP_PERCENTAGE:    parseFloat(optional('MARKUP_PERCENTAGE', '40')),
   LOW_BALANCE_THRESHOLD: parseFloat(optional('LOW_BALANCE_THRESHOLD', '50000')),
+  // Minimum nilai tagihan (Rp) per order. Order dengan total di bawah ini ditolak. Alasan:
+  // deposit minimum di IndoSMM Rp 10.000, jadi order bertagihan sangat kecil (mis. Rp 2.000)
+  // tidak ekonomis. Set 0 untuk menonaktifkan minimum belanja.
+  MIN_ORDER_BILL:       parseFloat(optional('MIN_ORDER_BILL', '10000')),
+  // Batas jumlah ticket AKTIF yang boleh dimiliki satu user sekaligus. User boleh membuka
+  // beberapa ticket untuk layanan/platform BERBEDA (mis. Instagram + TikTok) selama belum
+  // melewati batas ini. Set 0 untuk tanpa batas. (Order duplikat pada link+layanan yang sama
+  // tetap dicegah terpisah.)
+  MAX_ACTIVE_TICKETS_PER_USER: parseInt(optional('MAX_ACTIVE_TICKETS_PER_USER', '5'), 10),
   // Selang cek & notif saldo IndoSMM (jam). Default 6 jam biar tidak spam tiap jam.
   BALANCE_CHECK_INTERVAL_HOURS: parseFloat(optional('BALANCE_CHECK_INTERVAL_HOURS', '6')),
   DATABASE_URL:         optional('DATABASE_URL', 'file:./dev.db'),
