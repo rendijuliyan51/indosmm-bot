@@ -65,7 +65,7 @@ export async function runServiceSync(): Promise<void> {
       // IndoSMM bernama "Refill NN Days" justru punya flag API `false`/kosong — akibatnya bot
       // menolak refill padahal namanya jelas menjanjikan garansi (membingungkan pembeli). Nama
       // adalah sinyal paling andal di panel SMM, jadi kita percayai penyebutan refill di nama.
-      const nameSaysNoRefill = /no\s*refill/i.test(s.name);
+      const nameSaysNoRefill = /\bno[\s-]*refill\b/i.test(s.name);
       const apiRefill        = s.refill === true;
       const refill           = nameSaysNoRefill ? false : (parseRefillSupport(s.name) || apiRefill);
 

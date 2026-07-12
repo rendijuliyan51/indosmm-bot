@@ -2,7 +2,7 @@ import { ButtonInteraction, MessageFlags } from 'discord.js';
 import { prisma } from '../../bot/client';
 import { indosmm } from '../../providers/indosmm';
 import { logger } from '../../lib/logger';
-import { isRefillExpired } from '../../lib/pricing';
+import { isRefillExpired, getRefillExpiryDate } from '../../lib/pricing';
 
 const REFILLABLE_ORDER_STATUSES = ['completed', 'partial'];
 
@@ -48,7 +48,12 @@ export async function claimRefill(orderInput: string, requesterId: string | null
     return { ok: false, message: '❌ Order ini belum punya provider order ID, jadi belum bisa direfill.' };
   }
 
-  if (isRefillExpired(order.refill_expires_at)) {
+  // Fallback untuk order LAMA yang refill_expires_at-nya null (mis. dibuat saat deteksi refill
+  // masih bermasalah sehingga masa garansi tak sempat diset): hitung dari created_at + masa
+  // garansi layanan, agar order yang seharusnya masih bergaransi tetap bisa diklaim.
+  const effectiveExpiry = order.refill_expires_at
+    ?? (service.refill_days > 0 ? getRefillExpiryDate(order.created_at, service.refill_days) : null);
+  if (isRefillExpired(effectiveExpiry)) {
     return { ok: false, message: '❌ Masa garansi refill untuk order ini sudah habis.' };
   }
 
