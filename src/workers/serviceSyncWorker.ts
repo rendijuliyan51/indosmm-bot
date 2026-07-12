@@ -56,17 +56,18 @@ export async function runServiceSync(): Promise<void> {
       const providerServiceId = String(s.service);
       const buyPrice    = parseFloat(s.rate);
 
-      // PENENTUAN SUPPORT REFILL (akurat):
-      // Sumber kebenaran utama = flag `refill` dari API IndoSMM (paling bisa dipercaya karena
-      // datang langsung dari provider). Nama layanan HANYA dipakai sebagai pelengkap:
-      //   - Kalau nama menyebut "no refill" secara eksplisit → PAKSA false (hindari menjanjikan
-      //     garansi yang tak ada).
-      //   - Kalau flag API tidak tersedia (bukan boolean) → jatuh ke isyarat nama.
-      // Ini mencegah salah tandai layanan refill/non-refill hanya karena kata "refill" muncul
-      // di nama.
-      const nameSaysNoRefill = /no\s*refill/i.test(s.name);
-      const apiRefill        = typeof s.refill === 'boolean' ? s.refill : undefined;
-      const refill           = nameSaysNoRefill ? false : (apiRefill ?? parseRefillSupport(s.name));
+      // PENENTUAN SUPPORT REFILL:
+      // Layanan dianggap MENDUKUNG refill bila NAMA-nya menyebut refill (mis. "Refill 99 Days" —
+      // inilah yang DILIHAT & DIHARAPKAN pembeli) ATAU flag `refill` dari API IndoSMM bernilai true.
+      // Penyebutan "no refill" secara eksplisit di nama SELALU menang → false.
+      //
+      // Catatan: sebelumnya kita memprioritaskan flag API secara mutlak, tapi banyak layanan
+      // IndoSMM bernama "Refill NN Days" justru punya flag API `false`/kosong — akibatnya bot
+      // menolak refill padahal namanya jelas menjanjikan garansi (membingungkan pembeli). Nama
+      // adalah sinyal paling andal di panel SMM, jadi kita percayai penyebutan refill di nama.
+      const nameSaysNoRefill = /\bno[\s-]*refill\b/i.test(s.name);
+      const apiRefill        = s.refill === true;
+      const refill           = nameSaysNoRefill ? false : (parseRefillSupport(s.name) || apiRefill);
 
       // MASA GARANSI (hari): coba baca dari nama ("Refill: 30 Days" / "Lifetime"). Kalau layanan
       // mendukung refill TAPI harinya tidak tercantum (hasil parse 0), pakai default dari ENV,

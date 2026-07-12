@@ -526,9 +526,35 @@ export function buildLowBalanceNotif(balance: number, threshold: number): EmbedB
     .setColor(RED)
     .setTitle('⚠️ Peringatan Saldo IndoSMM Menipis!')
     .setDescription(
-      `Saldo akun IndoSMM kamu saat ini: **Rp ${balance.toLocaleString('id-ID')}**\n` +
-      `Batas minimum: **Rp ${threshold.toLocaleString('id-ID')}**\n\n` +
-      `Segera deposit saldo agar order tidak gagal!`
+      `Saldo **deposit provider (IndoSMM)** saat ini: **${formatRupiah(balance)}**\n` +
+      `Batas minimum: **${formatRupiah(threshold)}**\n\n` +
+      `Segera deposit saldo agar order tidak gagal!\n\n` +
+      `ℹ️ _Ini modal deposit di IndoSMM, BUKAN omzet penjualan. Omzet ada di_ \`/admin stats\`.`
+    )
+    .setFooter(footer())
+    .setTimestamp();
+}
+
+// Embed cek saldo provider on-demand (/admin balance). Sengaja MEMBEDAKAN dengan tegas antara
+// "saldo deposit provider" (modal beli layanan di IndoSMM) dan "omzet penjualan" (uang dari
+// pembeli via QRIS) agar tidak tertukar.
+export function buildBalanceEmbed(data: { balance: number; currency: string; threshold: number }): EmbedBuilder {
+  const low        = data.balance < data.threshold;
+  const currencyNote = data.currency && data.currency.toUpperCase() !== 'IDR'
+    ? ` _(mata uang provider: ${data.currency})_`
+    : '';
+  return new EmbedBuilder()
+    .setColor(low ? RED : GREEN)
+    .setTitle('💰 Saldo Deposit Provider (IndoSMM)')
+    .setDescription(
+      `Saldo saat ini: **${formatRupiah(data.balance)}**${currencyNote}\n` +
+      `Ambang notif menipis: ${formatRupiah(data.threshold)}\n\n` +
+      (low ? '⚠️ Saldo di bawah ambang — segera deposit ke IndoSMM.' : '✅ Saldo aman.') +
+      `\n\n━━━━━━━━━━━━━━\n` +
+      `ℹ️ **Penting:** ini **modal deposit kamu DI IndoSMM** (untuk membeli layanan dari provider), ` +
+      `**BUKAN** omzet/pendapatan dari pembeli.\n` +
+      `• Uang pembeli (QRIS) masuk ke rekening/akun QRIS kamu, terpisah dari IndoSMM.\n` +
+      `• Total penjualan (omzet) ada di \`/admin stats\`.`
     )
     .setFooter(footer())
     .setTimestamp();

@@ -21,14 +21,15 @@ export function calculateTotal(sellPricePerThousand: number, quantity: number): 
 export function parseRefillDays(serviceName: string): number {
   const match = serviceName.match(/refill[:\s]+(\d+)\s*day/i);
   if (match) return parseInt(match[1]);
-  if (/no refill/i.test(serviceName)) return 0;
+  if (/\bno[\s-]*refill\b/i.test(serviceName)) return 0;
   if (/lifetime/i.test(serviceName)) return 36500;
   return 0;
 }
 
 export function parseRefillSupport(serviceName: string): boolean {
-  if (/no refill/i.test(serviceName)) return false;
-  if (/refill/i.test(serviceName)) return true;
+  // \b (word boundary) mencegah "no refill" salah cocok di dalam kata lain, mis. "domiNO REFILL".
+  if (/\bno[\s-]*refill\b/i.test(serviceName)) return false;
+  if (/\brefill\b/i.test(serviceName)) return true;
   return false;
 }
 
