@@ -4,8 +4,9 @@ import { logger } from '../../lib/logger';
 import { runServiceSync } from '../../workers/serviceSyncWorker';
 import { mapCategory } from '../../workers/catalogWorker';
 import { indosmm } from '../../providers/indosmm';
-import { buildTicketClosedEmbed, buildStatsEmbed, buildAdminServiceSearchEmbed } from '../../lib/embeds';
+import { buildTicketClosedEmbed, buildStatsEmbed, buildAdminServiceSearchEmbed, buildBalanceEmbed } from '../../lib/embeds';
 import { scheduleChannelDeletion } from '../../lib/ticketLifecycle';
+import { ENV } from '../../config/env';
 
 export async function handleAdminCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
@@ -16,6 +17,23 @@ export async function handleAdminCommand(interaction: ChatInputCommandInteractio
     await runServiceSync();
     const count = await prisma.service.count({ where: { active: true } });
     await interaction.editReply({ content: `✅ Sync selesai! Total **${count}** layanan aktif.` });
+    return;
+  }
+
+  if (sub === 'balance') {
+    try {
+      const info = await indosmm.getBalanceInfo();
+      await interaction.editReply({
+        embeds: [buildBalanceEmbed({
+          balance:   info.balance,
+          currency:  info.currency,
+          threshold: ENV.LOW_BALANCE_THRESHOLD,
+        })],
+      });
+    } catch (e: any) {
+      logger.error('[Admin] Gagal ambil saldo provider', { error: e?.message });
+      await interaction.editReply({ content: `❌ Gagal mengambil saldo provider: ${e?.message ?? 'unknown error'}` });
+    }
     return;
   }
 

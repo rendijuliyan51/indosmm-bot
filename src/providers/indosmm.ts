@@ -66,8 +66,21 @@ export const indosmm = {
   },
 
   async getBalance(): Promise<number> {
-    const res = await request({ action: 'balance' }) as { balance?: string };
-    return parseFloat(res?.balance || '0');
+    const info = await indosmm.getBalanceInfo();
+    return info.balance;
+  },
+
+  // Ambil saldo LENGKAP: nilai numerik, mata uang, dan respons mentah provider.
+  // Respons mentah di-log untuk memudahkan AUDIT (mengecek nilai & mata uang asli dari IndoSMM
+  // bila ada keraguan soal angka saldo yang tampil).
+  async getBalanceInfo(): Promise<{ balance: number; currency: string; raw: unknown }> {
+    const res = await request({ action: 'balance' }) as { balance?: string; currency?: string };
+    // Parse aman: IndoSMM umumnya mengirim "12345.6700" (titik desimal, tanpa pemisah ribuan).
+    // Buang karakter non-numerik (mis. "Rp"/spasi/koma ribuan) agar tidak salah baca.
+    const parsed  = parseFloat(String(res?.balance ?? '0').replace(/[^0-9.\-]/g, ''));
+    const balance = Number.isFinite(parsed) ? parsed : 0;
+    logger.info('[Balance] Respons saldo provider (mentah)', { raw: res });
+    return { balance, currency: res?.currency ?? 'IDR', raw: res };
   },
 
   async createOrder(serviceId: string, link: string, quantity: number): Promise<IndoSMMOrderResult> {

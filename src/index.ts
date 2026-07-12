@@ -123,6 +123,9 @@ function buildCommandsJson(): any[] {
         s.setName('sync-services').setDescription('Sync layanan dari IndoSMM')
       )
       .addSubcommand((s: SlashCommandSubcommandBuilder) =>
+        s.setName('balance').setDescription('Cek saldo deposit provider (IndoSMM) real-time')
+      )
+      .addSubcommand((s: SlashCommandSubcommandBuilder) =>
         s.setName('set-catalog-channel')
           .setDescription('Set channel katalog')
           .addChannelOption(o => o.setName('channel').setDescription('Channel katalog').setRequired(true))
