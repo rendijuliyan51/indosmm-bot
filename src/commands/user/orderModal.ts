@@ -6,6 +6,8 @@ import { calculateTotal, formatRupiah } from '../../lib/pricing';
 import { buildInvoiceEmbed, buildAdminNewOrderNotif } from '../../lib/embeds';
 import { buildDynamicQrisPayload, buildQrisPngBuffer } from '../../lib/qris';
 import { clearSelection } from '../../lib/selectionStore';
+import { mapCategory } from '../../workers/catalogWorker';
+import { detectServiceType } from './catalogSelectCategory';
 
 /**
  * Validasi target order.
@@ -185,8 +187,26 @@ export async function handleOrderModal(interaction: ModalSubmitInteraction): Pro
 
   try {
     const guild = interaction.guild!;
+
+    // Nama channel tiket: Platform-Layanan-Username-NomorUrut (mis. instagram-likes-equality-001).
+    // - Platform  : kategori yang sudah dirapikan (Instagram, TikTok, dst).
+    // - Layanan   : jenis layanan (Likes, Followers, Views, dst).
+    // - Username  : username Discord pembeli.
+    // - NomorUrut : nomor urut tiket global (3 digit), naik terus.
+    // CATATAN: Discord OTOMATIS memaksa nama channel jadi HURUF KECIL & mengganti karakter
+    // non-alfanumerik dengan '-'. Jadi hasil akhirnya lowercase (instagram-likes-equality-001).
+    const platform   = mapCategory(service.category) || service.category || 'order';
+    const svcType    = detectServiceType(service.name);
+    const ticketNo   = String((await prisma.ticket.count()) + 1).padStart(3, '0');
+    const namePrefix = `${platform}-${svcType}-${interaction.user.username}`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80);           // sisakan ruang untuk "-NNN" (batas nama channel Discord 100 char)
+    const channelName = `${namePrefix}-${ticketNo}`;
+
     const ticketChannel = await guild.channels.create({
-      name:   `ticket-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 32),
+      name:   channelName,
       type:   ChannelType.GuildText,
       parent: ENV.TICKET_CATEGORY_ID || undefined,
       permissionOverwrites: [
