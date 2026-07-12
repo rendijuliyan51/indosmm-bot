@@ -10,6 +10,7 @@ import {
   buildReviewButtonRow,
 } from '../lib/embeds';
 import { isRefillExpired } from '../lib/pricing';
+import { notifyUserWithFallback } from '../lib/notify';
 
 const ACTIVE_STATUSES = ['submitted', 'processing', 'partial', 'pending', 'in progress'];
 
@@ -145,10 +146,13 @@ export async function runOrderStatusCheck(client: Client): Promise<void> {
         // Notif user kalau completed (di ticket + DM), plus tombol beri rating.
         if (statusChanged && newStatus === 'completed') {
           const completedEmbed = buildOrderCompletedNotif({
-            userId:      ticket.discord_user_id,
-            serviceName: service.name,
-            category:    service.category,
-            quantity:    order.quantity,
+            userId:          ticket.discord_user_id,
+            serviceName:     service.name,
+            category:        service.category,
+            quantity:        order.quantity,
+            orderId:         order.id,
+            refillSupported: service.refill,
+            refillExpiresAt: updated.refill_expires_at,
           });
           const reviewRow = buildReviewButtonRow(order.id);
           await channel.send({
@@ -220,17 +224,16 @@ async function checkRefillStatuses(client: Client): Promise<void> {
           },
         });
 
-        // Notif ke ticket
-        const ticket = await prisma.ticket.findUnique({ where: { id: refill.ticket_id } });
-        if (!ticket) continue;
-
-        const channel = await client.channels.fetch(ticket.ticket_channel_id).catch(() => null) as TextChannel | null;
-        if (!channel) continue;
-
+        // Notif refill selesai — TIDAK bergantung channel tiket (bisa saja sudah ditutup/dihapus).
+        // Pakai fallback: DM dulu, kalau gagal ke channel admin log.
         if (newStatus === 'completed') {
-          await channel.send({
-            content: `<@${ticket.discord_user_id}> ♻️ Refill kamu sudah selesai! Silakan cek akun kamu.`,
-          });
+          const ticket = await prisma.ticket.findUnique({ where: { id: refill.ticket_id } });
+          const buyerId = ticket?.discord_user_id;
+          if (buyerId) {
+            await notifyUserWithFallback(client, buyerId, {
+              content: `<@${buyerId}> ♻️ Refill kamu untuk order \`${refill.order_id.slice(0, 8)}\` sudah **selesai**! Silakan cek akun kamu.`,
+            });
+          }
         }
 
         logger.info(`[RefillStatus] Refill ${refill.id}: ${refill.status} → ${newStatus}`);

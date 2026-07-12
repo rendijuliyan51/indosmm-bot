@@ -55,8 +55,27 @@ export async function runServiceSync(): Promise<void> {
     for (const s of filtered) {
       const providerServiceId = String(s.service);
       const buyPrice    = parseFloat(s.rate);
-      const refill      = parseRefillSupport(s.name) || s.refill;
-      const refillDays  = parseRefillDays(s.name);
+
+      // PENENTUAN SUPPORT REFILL (akurat):
+      // Sumber kebenaran utama = flag `refill` dari API IndoSMM (paling bisa dipercaya karena
+      // datang langsung dari provider). Nama layanan HANYA dipakai sebagai pelengkap:
+      //   - Kalau nama menyebut "no refill" secara eksplisit → PAKSA false (hindari menjanjikan
+      //     garansi yang tak ada).
+      //   - Kalau flag API tidak tersedia (bukan boolean) → jatuh ke isyarat nama.
+      // Ini mencegah salah tandai layanan refill/non-refill hanya karena kata "refill" muncul
+      // di nama.
+      const nameSaysNoRefill = /no\s*refill/i.test(s.name);
+      const apiRefill        = typeof s.refill === 'boolean' ? s.refill : undefined;
+      const refill           = nameSaysNoRefill ? false : (apiRefill ?? parseRefillSupport(s.name));
+
+      // MASA GARANSI (hari): coba baca dari nama ("Refill: 30 Days" / "Lifetime"). Kalau layanan
+      // mendukung refill TAPI harinya tidak tercantum (hasil parse 0), pakai default dari ENV,
+      // supaya garansi tidak langsung dianggap expired & refill benar-benar bisa diklaim.
+      let refillDays = parseRefillDays(s.name);
+      if (refill && refillDays === 0 && ENV.REFILL_DEFAULT_DAYS > 0) {
+        refillDays = ENV.REFILL_DEFAULT_DAYS;
+      }
+
       const min         = parseInt(s.min);
       const max         = parseInt(s.max);
       // Deskripsi dari provider bisa datang lewat "description" atau "desc".

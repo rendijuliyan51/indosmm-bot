@@ -35,6 +35,14 @@ export const ENV = {
   // melewati batas ini. Set 0 untuk tanpa batas. (Order duplikat pada link+layanan yang sama
   // tetap dicegah terpisah.)
   MAX_ACTIVE_TICKETS_PER_USER: parseInt(optional('MAX_ACTIVE_TICKETS_PER_USER', '5'), 10),
+  // Default masa garansi/refill (hari) untuk layanan yang MENDUKUNG refill tapi jumlah harinya
+  // tidak tercantum di nama layanan. Tanpa ini, masa garansi = 0 dan refill langsung dianggap
+  // expired (tidak bisa diklaim). Set 0 untuk tidak memberi default (garansi mengikuti nama saja).
+  REFILL_DEFAULT_DAYS:  parseInt(optional('REFILL_DEFAULT_DAYS', '30'), 10),
+  // Jeda (jam) sebelum tiket yang ordernya SUDAH selesai ditutup otomatis. Memberi waktu pembeli
+  // membaca notif & memberi rating. Refill tetap bisa diklaim lewat /order refill walau tiket
+  // sudah tutup (garansi disimpan di level order). Set 0 untuk tutup segera setelah selesai.
+  TICKET_AUTOCLOSE_HOURS: parseFloat(optional('TICKET_AUTOCLOSE_HOURS', '24')),
   // Selang cek & notif saldo IndoSMM (jam). Default 6 jam biar tidak spam tiap jam.
   BALANCE_CHECK_INTERVAL_HOURS: parseFloat(optional('BALANCE_CHECK_INTERVAL_HOURS', '6')),
   DATABASE_URL:         optional('DATABASE_URL', 'file:./dev.db'),

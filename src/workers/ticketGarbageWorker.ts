@@ -3,6 +3,7 @@ import { prisma } from '../bot/client';
 import { logger } from '../lib/logger';
 import { buildTicketClosedEmbed } from '../lib/embeds';
 import { scheduleChannelDeletion } from '../lib/ticketLifecycle';
+import { isRefillExpired } from '../lib/pricing';
 import { ENV } from '../config/env';
 
 async function closeAndDeleteTicket(
@@ -78,30 +79,39 @@ export async function runTicketGarbageCollector(client: Client): Promise<void> {
       },
     });
 
+    // Refill sekarang DECOUPLED dari channel tiket (bisa diklaim lewat /order refill walau tiket
+    // sudah ditutup). Jadi tiket TIDAK perlu dibiarkan terbuka selama masa garansi. Kita tutup
+    // semua tiket yang ordernya sudah selesai, setelah grace period agar pembeli sempat membaca
+    // notif & memberi rating.
+    const graceMs = Math.max(0, ENV.TICKET_AUTOCLOSE_HOURS) * 60 * 60 * 1000;
+
     for (const order of completedOrders) {
-      const service = await prisma.service.findUnique({ where: { id: order.service_id } });
-      const ticket  = await prisma.ticket.findUnique({ where: { id: order.ticket_id } });
+      const ticket = await prisma.ticket.findUnique({ where: { id: order.ticket_id } });
 
-      if (!ticket || ['closed', 'cancelled', 'orphaned'].includes(ticket.status)) continue;
-
-      // No refill → tutup langsung setelah completed
-      if (!service?.refill || service.refill_days === 0) {
-        await closeAndDeleteTicket(client, ticket.id, ticket.ticket_channel_id, 'Order selesai.');
+      // Tiket sudah tidak aktif → cukup tandai order agar tidak diproses ulang.
+      if (!ticket || ['closed', 'cancelled', 'orphaned'].includes(ticket.status)) {
         await prisma.order.update({
           where: { id: order.id },
           data:  { refill_status: 'closed' },
-        });
+        }).catch(() => {});
         continue;
       }
 
-      // Ada refill tapi sudah expired → tutup
-      if (order.refill_expires_at && order.refill_expires_at < now) {
-        await closeAndDeleteTicket(client, ticket.id, ticket.ticket_channel_id, 'Masa garansi telah berakhir.');
-        await prisma.order.update({
-          where: { id: order.id },
-          data:  { refill_status: 'closed' },
-        });
-      }
+      // Tunggu grace period sejak order selesai (order.updated_at) sebelum menutup.
+      const completedAt = order.updated_at.getTime();
+      if (graceMs > 0 && (now.getTime() - completedAt) < graceMs) continue;
+
+      const service = await prisma.service.findUnique({ where: { id: order.service_id } });
+      const stillGuaranteed = Boolean(service?.refill) && !isRefillExpired(order.refill_expires_at);
+      const reason = stillGuaranteed
+        ? 'Order selesai. Garansi/refill masih aktif — klaim kapan saja lewat `/order refill` dengan ID order kamu.'
+        : 'Order selesai.';
+
+      await closeAndDeleteTicket(client, ticket.id, ticket.ticket_channel_id, reason);
+      await prisma.order.update({
+        where: { id: order.id },
+        data:  { refill_status: 'closed' },
+      });
     }
 
     // 2. Cleanup ServiceSnapshot lebih dari 24 jam
