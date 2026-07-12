@@ -16,4 +16,15 @@ export const client = new Client({
     GatewayIntentBits.GuildMembers,
   ],
   partials: [Partials.Message, Partials.Channel],
+  // Konfigurasi REST lebih "sopan" terhadap rate limit Discord:
+  // - offset: tambah buffer 250ms pada perhitungan reset bucket agar tidak menembak tepat di
+  //   batas (menghindari 429 karena selisih jam antara host & Discord).
+  // - timeout: 20s supaya request lambat tidak menggantung terlalu lama.
+  // - retries: batasi retry otomatis (429 sudah ditangani antrian internal discord.js yang
+  //   menghormati Retry-After; retry berlebih hanya menambah beban saat sedang dibatasi).
+  rest: {
+    offset:  250,
+    timeout: 20_000,
+    retries: 2,
+  },
 });
